@@ -7,9 +7,11 @@ import sqlite3
 import sys
 import tempfile
 import threading
+import uuid
 from datetime import datetime
 from urllib.parse import unquote
 from pathlib import Path
+from typing import Any
 
 CURRENT_DIR = Path(__file__).resolve().parent
 PACKAGE_ROOT = CURRENT_DIR.parent
@@ -27,8 +29,25 @@ except Exception as exc:  # pragma: no cover
 
 from boardsight_ai.pipeline import run_pipeline, write_result
 from boardsight_ai.providers.media import clip_video_fast
+from boardsight_ai.agent_storage import (
+    create_agent_execution_run,
+    get_agent_execution_run,
+    init_agent_storage,
+    update_agent_execution_run,
+)
 from boardsight_ai.auth import authenticate_user, create_user, get_session_user, init_auth_storage
-from boardsight_ai.config import default_config
+from boardsight_ai.config import default_config, resolve_runtime_config
+from boardsight_ai.gitlab_execution import build_gitlab_execution_plan, sync_plan_to_gitlab
+from boardsight_ai.gitlab_storage import init_gitlab_storage, save_gitlab_sync
+from boardsight_ai.live_meeting import (
+    analyze_live_segments,
+    analyze_live_chunk_media,
+    append_transcript_dicts,
+    transcript_dicts_to_segments,
+    transcribe_live_chunk,
+    write_live_result,
+)
+from boardsight_ai.live_storage import create_live_session, get_live_session, init_live_storage, parse_live_session_record, update_live_session
 from boardsight_ai.features import decision_moments, visual_artifacts, workflow_engine
 from boardsight_ai.features.scoring import _classifier as _scoring_classifier
 from boardsight_ai.providers.llm import _summarizer
@@ -39,8 +58,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "output" / "appdata"
 AUTH_DB_PATH = DATA_DIR / "boardsight_auth.db"
 MEETING_DB_PATH = DATA_DIR / "boardsight_meetings.db"
+LIVE_DB_PATH = DATA_DIR / "boardsight_live.db"
+GITLAB_DB_PATH = DATA_DIR / "boardsight_gitlab.db"
+AGENT_DB_PATH = DATA_DIR / "boardsight_agent.db"
 init_auth_storage(AUTH_DB_PATH)
 init_storage(MEETING_DB_PATH)
+init_live_storage(LIVE_DB_PATH)
+init_gitlab_storage(GITLAB_DB_PATH)
+init_agent_storage(AGENT_DB_PATH)
 create_user(
     AUTH_DB_PATH,
     "admin",
@@ -235,6 +260,10 @@ def _summarize_meeting_row(row: dict) -> dict:
         "impactScore": float(row.get("impact_score") or 0),
         "productivityScore": float(row.get("productivity_score") or 0),
         "executionReadiness": float(row.get("execution_readiness") or 0),
+        "analysisProfile": row.get("analysis_profile") or "recorded-fast",
+        "sourceMode": row.get("source_mode") or "recorded",
+        "executionTaskCount": int(row.get("execution_task_count") or 0),
+        "riskSignalCount": int(row.get("risk_signal_count") or 0),
     }
 
 
@@ -339,12 +368,245 @@ def _resolve_analysis_input(
     return Path(str(analysis_range["output_path"])).resolve(), analysis_range
 
 
+def _resolve_analysis_profile(value: str | None) -> str:
+    profile = (value or "").strip().lower()
+    return profile or "recorded-fast"
+
+
+def _resolve_source_mode(value: str | None) -> str:
+    mode = (value or "").strip().lower()
+    return mode or "recorded"
+
+
+def _resolve_live_output_dir(session_id: str) -> Path:
+    output_dir = PROJECT_ROOT / "output" / f"live-session-{session_id}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
+
+
+def _owned_live_session(session_id: str, user: dict) -> dict:
+    record = get_live_session(LIVE_DB_PATH, session_id, user_id=int(user["user_id"]))
+    if record is None:
+        raise HTTPException(status_code=404, detail="Live session not found.")
+    return parse_live_session_record(record)
+
+
+def _build_live_response(record: dict, state: dict | None = None) -> dict:
+    payload = dict(state or record.get("state") or {})
+    payload.setdefault("session_id", record["session_id"])
+    payload.setdefault("title", record.get("title") or "Live Meeting")
+    payload.setdefault("status", record.get("status") or "active")
+    payload.setdefault("source_type", record.get("source_type") or "display-audio")
+    payload.setdefault("analysis_profile", record.get("analysis_profile") or "live")
+    payload["storage"] = {
+        "session_id": record["session_id"],
+        "output_dir": str(record.get("output_dir") or ""),
+        "created_at": str(record.get("created_at") or ""),
+        "updated_at": str(record.get("updated_at") or ""),
+    }
+    if record.get("final_result") and payload.get("status") == "finalized":
+        payload["final_result"] = record["final_result"]
+    return payload
+
+
+def _process_live_chunk_path(
+    *,
+    record: dict,
+    session_id: str,
+    chunk_path: Path,
+    chunk_start_seconds: float | None,
+    chunk_end_seconds: float | None,
+) -> dict:
+    output_dir = Path(str(record["output_dir"]))
+    runtime_config = resolve_runtime_config(
+        default_config(output_root=output_dir),
+        analysis_profile=str(record.get("analysis_profile") or "live"),
+        source_mode="live",
+    )
+    start_offset = float(chunk_start_seconds or 0.0)
+    new_segments = transcribe_live_chunk(
+        chunk_path,
+        runtime_config,
+        start_offset_seconds=start_offset,
+        speaker_name="Live Speaker",
+    )
+    transcript = append_transcript_dicts(list(record["transcript"]), new_segments)
+    segments = transcript_dicts_to_segments(transcript)
+    chunk_media_state = analyze_live_chunk_media(
+        chunk_path,
+        runtime_config,
+        start_offset_seconds=start_offset,
+        transcript_segments=new_segments,
+    )
+    previous_state = dict(record.get("state") or {})
+    cumulative_visuals = [*(previous_state.get("visual_artifacts", []) or []), *(chunk_media_state.get("visual_artifacts", []) or [])]
+    previous_attention = previous_state.get("attention_sentiment", {}) or {}
+    merged_attention = previous_attention
+    if chunk_media_state.get("attention_sentiment"):
+        from boardsight_ai.live_meeting import _attention_from_dict, _attention_to_dict, _merge_attention
+        merged_attention = _attention_to_dict(
+            _merge_attention(
+                _attention_from_dict(previous_attention),
+                _attention_from_dict(chunk_media_state.get("attention_sentiment") or {}),
+            )
+        )
+    cumulative_presentation = [*(previous_state.get("presentation_windows", []) or [])]
+    if chunk_media_state.get("presentation_insights"):
+        cumulative_presentation.append(chunk_media_state["presentation_insights"])
+    state = analyze_live_segments(
+        segments,
+        runtime_config,
+        session_id=session_id,
+        title=str(record.get("title") or "Live Meeting"),
+        source_type=str(record.get("source_type") or "display-audio"),
+        status=str(record.get("status") or "active"),
+        visual_artifact_payloads=cumulative_visuals,
+        cumulative_attention=merged_attention,
+        presentation_windows=cumulative_presentation,
+    )
+    state["last_chunk"] = {
+        "start_seconds": start_offset,
+        "end_seconds": float(chunk_end_seconds or start_offset),
+        "segment_count": len(new_segments),
+    }
+    state["warnings"] = [*(state.get("warnings", []) or []), *(chunk_media_state.get("warnings", []) or [])]
+    update_live_session(LIVE_DB_PATH, session_id, transcript=transcript, state=state)
+    return state
+
+
+def _recorded_meeting_to_execution_source(record: dict) -> tuple[dict[str, Any], str]:
+    payload = json.loads(str(record.get("result_json") or "{}"))
+    source = {
+        "decisions": payload.get("decision_moments", []),
+        "action_items": payload.get("workflow_model", {}).get("execution_plan", []),
+        "problems": [],
+        "discussion_points": [
+            segment.get("text", "")
+            for segment in (payload.get("transcript", {}).get("segments", []) or [])[:6]
+            if segment.get("text")
+        ],
+    }
+    title = str(record.get("run_name") or f"Meeting {record.get('id')}")
+    return source, title
+
+
+def _compact_transcript_points(transcript_segments: list[dict[str, Any]], limit: int = 8) -> list[str]:
+    points: list[str] = []
+    for segment in transcript_segments[:limit]:
+        text = str(segment.get("text") or "").strip()
+        if text:
+            points.append(text)
+    return points
+
+
+def _recorded_meeting_agent_context(record: dict) -> dict[str, Any]:
+    payload = json.loads(str(record.get("result_json") or "{}"))
+    transcript_segments = list(payload.get("transcript", {}).get("segments", []) or [])
+    contract = payload.get("metadata", {}).get("agentic_contract", {}) or {}
+    return {
+        "source_kind": "meeting",
+        "source_id": str(record.get("id")),
+        "title": str(record.get("run_name") or f"Meeting {record.get('id')}"),
+        "status": "finalized",
+        "source_mode": str(record.get("source_mode") or "recorded"),
+        "analysis_profile": str(record.get("analysis_profile") or "recorded-fast"),
+        "created_at": str(record.get("created_at") or ""),
+        "summary": {
+            "meeting_conclusion": payload.get("meeting_scores", {}).get("meeting_conclusion"),
+            "impact_score": payload.get("meeting_scores", {}).get("impact_score"),
+            "productivity_score": payload.get("meeting_scores", {}).get("productivity_score"),
+            "execution_readiness": payload.get("meeting_scores", {}).get("execution_readiness"),
+            "discussion_points": _compact_transcript_points(transcript_segments),
+        },
+        "counts": {
+            "transcript_segments": len(transcript_segments),
+            "decisions": len(payload.get("decision_moments", []) or []),
+            "action_items": len(payload.get("workflow_model", {}).get("execution_plan", []) or []),
+            "risks": len(contract.get("entities", {}).get("risk_signals", []) or []),
+            "visual_artifacts": len(payload.get("visual_artifacts", []) or []),
+        },
+        "agentic_contract": contract,
+        "storage": {
+            "meeting_id": int(record["id"]),
+            "output_dir": str(record.get("output_dir") or ""),
+            "result_file": str(record.get("result_file") or ""),
+        },
+    }
+
+
+def _live_agent_context(record: dict) -> dict[str, Any]:
+    state = dict(record.get("state") or {})
+    transcript_segments = list(record.get("transcript") or [])
+    contract = state.get("agentic_contract", {}) or {}
+    discussion_points: list[str] = []
+    for item in (state.get("discussion_points", []) or [])[:8]:
+        if isinstance(item, dict):
+            text = str(item.get("text") or "").strip()
+        else:
+            text = str(item or "").strip()
+        if text:
+            discussion_points.append(text)
+    return {
+        "source_kind": "live",
+        "source_id": str(record.get("session_id")),
+        "title": str(record.get("title") or "Live Meeting"),
+        "status": str(record.get("status") or "active"),
+        "source_mode": "live",
+        "analysis_profile": str(record.get("analysis_profile") or "live"),
+        "created_at": str(record.get("created_at") or ""),
+        "updated_at": str(record.get("updated_at") or ""),
+        "summary": {
+            "rolling_summary": state.get("rolling_summary"),
+            "final_summary": state.get("final_summary"),
+            "meeting_outcomes": list(state.get("meeting_outcomes", []) or []),
+            "discussion_points": discussion_points,
+        },
+        "counts": {
+            "transcript_segments": len(transcript_segments),
+            "decisions": len(state.get("decisions", []) or []),
+            "action_items": len(state.get("action_items", []) or []),
+            "problems": len(state.get("problems", []) or []),
+            "visual_artifacts": len(state.get("visual_artifacts", []) or []),
+        },
+        "agentic_contract": contract,
+        "storage": {
+            "session_id": str(record.get("session_id") or ""),
+            "output_dir": str(record.get("output_dir") or ""),
+        },
+    }
+
+
+def _resolve_agent_source_context(source_kind: str, source_id: str, user: dict) -> dict[str, Any]:
+    normalized_kind = str(source_kind or "").strip().lower()
+    if normalized_kind == "live":
+        record = _owned_live_session(source_id, user)
+        return _live_agent_context(record)
+    if normalized_kind == "meeting":
+        record = _resolve_owned_meeting_record(int(source_id), user)
+        return _recorded_meeting_agent_context(record)
+    raise HTTPException(status_code=400, detail="source_kind must be 'live' or 'meeting'.")
+
+
+def _resolve_agent_connection(request_payload: dict[str, Any]) -> dict[str, Any]:
+    nested = request_payload.get("connection", {})
+    if isinstance(nested, dict) and nested:
+        return nested
+    flat_connection = {
+        "base_url": str(request_payload.get("gitlab_base_url", "") or "").strip(),
+        "project_id": str(request_payload.get("gitlab_project_id", "") or "").strip(),
+        "private_token": str(request_payload.get("gitlab_private_token", "") or "").strip(),
+    }
+    return {key: value for key, value in flat_connection.items() if value}
+
+
 def _run_pipeline_for_shared_path(
     shared_file_path: str,
     output_dir_name: str | None,
     user: dict | None = None,
     start_seconds: float | None = None,
     end_seconds: float | None = None,
+    analysis_profile: str | None = None,
+    source_mode: str | None = None,
 ) -> dict:
     candidate_path = Path(unquote(shared_file_path)).resolve()
     output_root = PROJECT_ROOT / "output"
@@ -354,7 +616,19 @@ def _run_pipeline_for_shared_path(
         raise HTTPException(status_code=400, detail="Shared file path does not exist for AI processing.")
     output_dir = _resolve_output_dir(output_dir_name)
     analysis_input_path, analysis_range = _resolve_analysis_input(candidate_path, output_dir, start_seconds, end_seconds)
-    result = run_pipeline(analysis_input_path, output_dir, analysis_range=analysis_range)
+    runtime_config = resolve_runtime_config(
+        default_config(output_root=output_dir),
+        analysis_profile=_resolve_analysis_profile(analysis_profile),
+        source_mode=_resolve_source_mode(source_mode),
+    )
+    result = run_pipeline(
+        analysis_input_path,
+        output_dir,
+        config=runtime_config,
+        analysis_range=analysis_range,
+        analysis_profile=runtime_config.default_analysis_profile,
+        source_mode=_resolve_source_mode(source_mode),
+    )
     return _build_output_payload(result, output_dir, user=user)
 
 
@@ -376,6 +650,8 @@ async def run_pipeline_path_endpoint(request: Request, payload: dict | None = No
     )
     start_seconds = _parse_optional_float(request_payload.get("start_seconds", request.query_params.get("start_seconds")))
     end_seconds = _parse_optional_float(request_payload.get("end_seconds", request.query_params.get("end_seconds")))
+    analysis_profile = str(request_payload.get("analysis_profile", request.query_params.get("analysis_profile", ""))).strip() or None
+    source_mode = str(request_payload.get("source_mode", request.query_params.get("source_mode", ""))).strip() or None
     if not file_path:
         raise HTTPException(status_code=400, detail="file_path is required.")
     return _run_pipeline_for_shared_path(
@@ -384,6 +660,8 @@ async def run_pipeline_path_endpoint(request: Request, payload: dict | None = No
         user=user,
         start_seconds=start_seconds,
         end_seconds=end_seconds,
+        analysis_profile=analysis_profile,
+        source_mode=source_mode,
     )
 
 
@@ -429,6 +707,8 @@ async def run_pipeline_endpoint(
     shared_file_path = str(request_payload.get("file_path", "")).strip() or request_query.get("file_path")
     start_seconds = _parse_optional_float(request_payload.get("start_seconds", request_query.get("start_seconds")))
     end_seconds = _parse_optional_float(request_payload.get("end_seconds", request_query.get("end_seconds")))
+    analysis_profile = str(request_payload.get("analysis_profile", request_query.get("analysis_profile", ""))).strip() or "recorded-fast"
+    source_mode = str(request_payload.get("source_mode", request_query.get("source_mode", ""))).strip() or "recorded"
     if resolved_upload is None:
         if shared_file_path:
             return _run_pipeline_for_shared_path(
@@ -437,6 +717,8 @@ async def run_pipeline_endpoint(
                 user=user,
                 start_seconds=start_seconds,
                 end_seconds=end_seconds,
+                analysis_profile=analysis_profile,
+                source_mode=source_mode,
             )
 
         try:
@@ -462,8 +744,510 @@ async def run_pipeline_endpoint(
             raise HTTPException(status_code=400, detail="Failed to persist uploaded file.")
 
         analysis_input_path, analysis_range = _resolve_analysis_input(video_path, output_dir, start_seconds, end_seconds)
-        result = run_pipeline(analysis_input_path, output_dir, analysis_range=analysis_range)
+        runtime_config = resolve_runtime_config(
+            default_config(output_root=output_dir),
+            analysis_profile=_resolve_analysis_profile(analysis_profile),
+            source_mode=_resolve_source_mode(source_mode),
+        )
+        result = run_pipeline(
+            analysis_input_path,
+            output_dir,
+            config=runtime_config,
+            analysis_range=analysis_range,
+            analysis_profile=runtime_config.default_analysis_profile,
+            source_mode=_resolve_source_mode(source_mode),
+        )
         return _build_output_payload(result, output_dir, user=user)
+
+
+@app.post("/api/v1/live/start")
+async def start_live_session(request: Request, payload: dict | None = None) -> dict:
+    user = _require_session_user(request)
+    request_payload = await _collect_request_payload(request, payload)
+    title = str(request_payload.get("title", "")).strip() or f"Live Meeting {datetime.utcnow().strftime('%H:%M:%S')}"
+    source_type = str(request_payload.get("source_type", "display-audio")).strip() or "display-audio"
+    analysis_profile = _resolve_analysis_profile(str(request_payload.get("analysis_profile", "live")).strip() or "live")
+    session_id = uuid.uuid4().hex[:12]
+    output_dir = _resolve_live_output_dir(session_id)
+    create_live_session(
+        LIVE_DB_PATH,
+        session_id=session_id,
+        user_id=int(user["user_id"]),
+        username=str(user["username"]),
+        title=title,
+        source_type=source_type,
+        analysis_profile=analysis_profile,
+        output_dir=output_dir,
+    )
+    initial_state = {
+        "session_id": session_id,
+        "title": title,
+        "status": "active",
+        "source_type": source_type,
+        "analysis_profile": analysis_profile,
+        "transcript": [],
+        "rolling_summary": "Live meeting started. Waiting for transcript chunks.",
+        "discussion_points": [],
+        "problems": [],
+        "decisions": [],
+        "action_items": [],
+        "prioritized_decisions": [],
+        "decision_traces": [],
+        "actionable_insights": [],
+        "suggestions": [
+            "Share the meeting tab with audio for the strongest live capture.",
+            "Keep the session running until formal decisions and next steps are spoken clearly.",
+        ],
+        "meeting_outcomes": [],
+        "meeting_scores": {},
+        "warnings": [],
+        "agentic_contract": {
+            "source_mode": "live",
+            "analysis_profile": analysis_profile,
+        },
+    }
+    update_live_session(LIVE_DB_PATH, session_id, transcript=[], state=initial_state)
+    record = _owned_live_session(session_id, user)
+    return _build_live_response(record, initial_state)
+
+
+@app.get("/api/v1/live/{session_id}")
+def get_live_session_endpoint(session_id: str, request: Request) -> dict:
+    user = _require_session_user(request)
+    record = _owned_live_session(session_id, user)
+    return _build_live_response(record)
+
+
+@app.post("/api/v1/live/{session_id}/append-text")
+async def append_live_text(session_id: str, request: Request, payload: dict | None = None) -> dict:
+    user = _require_session_user(request)
+    record = _owned_live_session(session_id, user)
+    request_payload = await _collect_request_payload(request, payload)
+    text = str(request_payload.get("text", "")).strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Live text chunk is required.")
+    start_seconds = float(request_payload.get("start_seconds", 0.0) or 0.0)
+    end_seconds = float(request_payload.get("end_seconds", start_seconds + 4.0) or (start_seconds + 4.0))
+    speaker = str(request_payload.get("speaker", "Live Speaker")).strip() or "Live Speaker"
+    transcript = list(record["transcript"])
+    transcript.append(
+        {
+            "start": start_seconds,
+            "end": end_seconds,
+            "speaker": speaker,
+            "text": text,
+            "confidence": 0.7,
+        }
+    )
+    segments = transcript_dicts_to_segments(transcript)
+    runtime_config = resolve_runtime_config(
+        default_config(output_root=Path(str(record["output_dir"]))),
+        analysis_profile=str(record.get("analysis_profile") or "live"),
+        source_mode="live",
+    )
+    state = analyze_live_segments(
+        segments,
+        runtime_config,
+        session_id=session_id,
+        title=str(record.get("title") or "Live Meeting"),
+        source_type=str(record.get("source_type") or "manual"),
+        status=str(record.get("status") or "active"),
+        visual_artifact_payloads=list((record.get("state") or {}).get("visual_artifacts", []) or []),
+        cumulative_attention=((record.get("state") or {}).get("attention_sentiment", {}) or {}),
+        presentation_windows=list((record.get("state") or {}).get("presentation_windows", []) or []),
+    )
+    update_live_session(LIVE_DB_PATH, session_id, transcript=transcript, state=state)
+    refreshed = _owned_live_session(session_id, user)
+    return _build_live_response(refreshed, state)
+
+
+@app.post("/api/v1/live/{session_id}/chunk")
+async def append_live_chunk(
+    session_id: str,
+    request: Request,
+    file: UploadFile = File(...),
+    chunk_start_seconds: float | None = Form(default=None),
+    chunk_end_seconds: float | None = Form(default=None),
+) -> dict:
+    user = _require_session_user(request)
+    record = _owned_live_session(session_id, user)
+    output_dir = Path(str(record["output_dir"]))
+    chunks_dir = output_dir / "chunks"
+    chunks_dir.mkdir(parents=True, exist_ok=True)
+    suffix = Path(file.filename or "chunk.webm").suffix or ".webm"
+    chunk_index = len(record["transcript"])
+    chunk_path = chunks_dir / f"chunk-{chunk_index:05d}{suffix}"
+    chunk_path.write_bytes(await file.read())
+    state = _process_live_chunk_path(
+        record=record,
+        session_id=session_id,
+        chunk_path=chunk_path,
+        chunk_start_seconds=chunk_start_seconds,
+        chunk_end_seconds=chunk_end_seconds,
+    )
+    refreshed = _owned_live_session(session_id, user)
+    return _build_live_response(refreshed, state)
+
+
+@app.post("/api/v1/live/{session_id}/chunk-path")
+@app.get("/api/v1/live/{session_id}/chunk-path")
+async def append_live_chunk_path(session_id: str, request: Request) -> dict:
+    user = _require_session_user(request)
+    record = _owned_live_session(session_id, user)
+    raw_body = await request.body()
+    payload: dict[str, Any] = {}
+    if raw_body.strip():
+        payload = json.loads(raw_body)
+    if not payload:
+        payload = dict(request.query_params)
+
+    shared_file_path = str(payload.get("shared_file_path") or "").strip()
+    if not shared_file_path:
+        raise HTTPException(status_code=400, detail="Missing shared file path.")
+    chunk_path = Path(unquote(shared_file_path)).resolve()
+    output_root = PROJECT_ROOT / "output"
+    if not str(chunk_path).startswith(str(output_root.resolve())):
+        raise HTTPException(status_code=400, detail="Shared live chunk must be inside the output directory.")
+    if not chunk_path.exists():
+        raise HTTPException(status_code=400, detail="Shared live chunk path does not exist.")
+
+    state = _process_live_chunk_path(
+        record=record,
+        session_id=session_id,
+        chunk_path=chunk_path,
+        chunk_start_seconds=_parse_optional_float(payload.get("chunk_start_seconds")),
+        chunk_end_seconds=_parse_optional_float(payload.get("chunk_end_seconds")),
+    )
+    try:
+        chunk_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+    refreshed = _owned_live_session(session_id, user)
+    return _build_live_response(refreshed, state)
+
+
+@app.post("/api/v1/live/{session_id}/finalize")
+def finalize_live_session(session_id: str, request: Request) -> dict:
+    user = _require_session_user(request)
+    record = _owned_live_session(session_id, user)
+    segments = transcript_dicts_to_segments(list(record["transcript"]))
+    runtime_config = resolve_runtime_config(
+        default_config(output_root=Path(str(record["output_dir"]))),
+        analysis_profile=str(record.get("analysis_profile") or "live"),
+        source_mode="live",
+    )
+    final_state = analyze_live_segments(
+        segments,
+        runtime_config,
+        session_id=session_id,
+        title=str(record.get("title") or "Live Meeting"),
+        source_type=str(record.get("source_type") or "display-audio"),
+        status="finalized",
+        visual_artifact_payloads=list((record.get("state") or {}).get("visual_artifacts", []) or []),
+        cumulative_attention=((record.get("state") or {}).get("attention_sentiment", {}) or {}),
+        presentation_windows=list((record.get("state") or {}).get("presentation_windows", []) or []),
+    )
+    final_state["final_summary"] = final_state.get("rolling_summary", "")
+    final_result_path = write_live_result(final_state, Path(str(record["output_dir"])))
+    final_state["storage"] = {
+        "session_id": session_id,
+        "output_dir": str(record.get("output_dir") or ""),
+        "result_file": str(final_result_path),
+    }
+    update_live_session(
+        LIVE_DB_PATH,
+        session_id,
+        transcript=list(record["transcript"]),
+        state=final_state,
+        status="finalized",
+        final_result=final_state,
+    )
+    refreshed = _owned_live_session(session_id, user)
+    return _build_live_response(refreshed, final_state)
+
+
+@app.get("/api/v1/agent/capabilities")
+def agent_capabilities(request: Request) -> dict:
+    _require_session_user(request)
+    return {
+        "agent_runtime": "google-cloud-agent-builder-target",
+        "boardSight_role": "meeting-perception-and-execution-memory",
+        "supported_sources": ["meeting", "live"],
+        "execution_targets": ["gitlab-mcp"],
+        "recommended_tools": [
+            {
+                "name": "list_sources",
+                "method": "GET",
+                "path": "/api/v1/agent/sources",
+                "purpose": "Discover live and recorded meeting sources available to the agent.",
+            },
+            {
+                "name": "get_source_context",
+                "method": "GET",
+                "path": "/api/v1/agent/context/{source_kind}/{source_id}",
+                "purpose": "Fetch normalized meeting memory and the agentic contract.",
+            },
+            {
+                "name": "preview_execution",
+                "method": "POST",
+                "path": "/api/v1/agent/execution/preview",
+                "purpose": "Generate an approval-gated GitLab execution plan.",
+            },
+            {
+                "name": "approve_execution",
+                "method": "POST",
+                "path": "/api/v1/agent/execution/approve",
+                "purpose": "Execute an approved GitLab sync after user approval.",
+            },
+            {
+                "name": "get_execution_status",
+                "method": "GET",
+                "path": "/api/v1/agent/execution/{approval_id}",
+                "purpose": "Inspect the approval and downstream sync status.",
+            },
+        ],
+        "credentials_needed": [
+            "Google Cloud project and Agent Builder app access",
+            "GitLab base URL, project ID/path, and private token for real sync",
+        ],
+    }
+
+
+@app.get("/api/v1/agent/sources")
+def agent_sources(request: Request) -> dict:
+    user = _require_session_user(request)
+    meeting_rows = list_meeting_results(MEETING_DB_PATH, user_id=int(user["user_id"]))
+    live_items: list[dict[str, Any]] = []
+    meetings: list[dict[str, Any]] = []
+
+    for row in meeting_rows[:20]:
+        meetings.append(_recorded_meeting_agent_context(row))
+
+    output_root = PROJECT_ROOT / "output"
+    live_dirs = sorted(output_root.glob("live-session-*"), key=lambda item: item.stat().st_mtime, reverse=True)
+    for live_dir in live_dirs[:20]:
+        session_id = live_dir.name.removeprefix("live-session-")
+        try:
+            record = _owned_live_session(session_id, user)
+        except HTTPException:
+            continue
+        live_items.append(_live_agent_context(record))
+
+    return {"items": {"meetings": meetings, "live": live_items}}
+
+
+@app.get("/api/v1/agent/context/{source_kind}/{source_id}")
+def agent_source_context(source_kind: str, source_id: str, request: Request) -> dict:
+    user = _require_session_user(request)
+    return _resolve_agent_source_context(source_kind, source_id, user)
+
+
+@app.post("/api/v1/agent/execution/preview")
+async def agent_execution_preview(request: Request, payload: dict | None = None) -> dict:
+    user = _require_session_user(request)
+    request_payload = await _collect_request_payload(request, payload)
+    source_kind = str(request_payload.get("source_kind", "")).strip().lower()
+    source_id = str(request_payload.get("source_id", "")).strip()
+    assignee_map = request_payload.get("assignee_map", {})
+    if not source_kind or not source_id:
+        raise HTTPException(status_code=400, detail="source_kind and source_id are required.")
+
+    context = _resolve_agent_source_context(source_kind, source_id, user)
+    contract = context.get("agentic_contract", {}) or {}
+    source = {
+        "decisions": contract.get("entities", {}).get("decisions", []),
+        "action_items": contract.get("entities", {}).get("actions", []),
+        "problems": [
+            {
+                "text": item.get("description", ""),
+                "timestamp": item.get("timestamp") or item.get("risk_id"),
+                "speaker": item.get("speaker", "BoardSight"),
+                "category": item.get("kind", "risk"),
+            }
+            for item in (contract.get("entities", {}).get("risk_signals", []) or [])
+        ],
+        "discussion_points": context.get("summary", {}).get("discussion_points", []),
+    }
+    plan = build_gitlab_execution_plan(
+        source,
+        source_kind=source_kind,
+        source_id=source_id,
+        meeting_title=str(context.get("title") or f"{source_kind}-{source_id}"),
+        assignee_map=assignee_map if isinstance(assignee_map, dict) else {},
+    )
+    approval_record = create_agent_execution_run(
+        AGENT_DB_PATH,
+        source_kind=source_kind,
+        source_id=source_id,
+        meeting_title=str(context.get("title") or f"{source_kind}-{source_id}"),
+        created_by_user_id=int(user["user_id"]),
+        plan=plan,
+    )
+    return {
+        "status": "previewed",
+        "approval_required": True,
+        "approval_id": approval_record.get("approval_id"),
+        "plan": plan,
+        "source_context": context,
+    }
+
+
+@app.get("/api/v1/agent/execution/{approval_id}")
+def agent_execution_status(approval_id: str, request: Request) -> dict:
+    _require_session_user(request)
+    record = get_agent_execution_run(AGENT_DB_PATH, approval_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Agent execution run not found.")
+    return {
+        "approval_id": record["approval_id"],
+        "status": record["status"],
+        "source_kind": record["source_kind"],
+        "source_id": record["source_id"],
+        "meeting_title": record["meeting_title"],
+        "plan": record.get("plan_json") or {},
+        "sync_result": record.get("sync_json"),
+        "created_at": record.get("created_at"),
+        "updated_at": record.get("updated_at"),
+    }
+
+
+@app.post("/api/v1/agent/execution/approve")
+async def agent_execution_approve(request: Request, payload: dict | None = None) -> dict:
+    user = _require_session_user(request)
+    request_payload = await _collect_request_payload(request, payload)
+    approval_id = str(request_payload.get("approval_id", "")).strip()
+    if not approval_id:
+        raise HTTPException(status_code=400, detail="approval_id is required.")
+    record = get_agent_execution_run(AGENT_DB_PATH, approval_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Agent execution run not found.")
+
+    connection = _resolve_agent_connection(request_payload)
+    plan = record.get("plan_json") or {}
+    runtime_config = default_config()
+    sync_result = sync_plan_to_gitlab(plan, runtime_config, connection_overrides=connection)
+    save_gitlab_sync(
+        GITLAB_DB_PATH,
+        source_kind=str(record.get("source_kind") or ""),
+        source_id=str(record.get("source_id") or ""),
+        project_ref=str(connection.get("project_id") or ""),
+        dry_run=sync_result.get("status") != "synced",
+        plan=plan,
+        sync_result=sync_result,
+    )
+    updated = update_agent_execution_run(
+        AGENT_DB_PATH,
+        approval_id,
+        status="synced" if sync_result.get("status") == "synced" else "dry-run-only",
+        approved_by_user_id=int(user["user_id"]),
+        connection=connection or None,
+        sync_result=sync_result,
+    )
+    return {
+        "approval_id": approval_id,
+        "status": updated.get("status") if updated else "unknown",
+        "plan": plan,
+        "sync_result": sync_result,
+    }
+
+
+@app.post("/api/v1/gitlab/plan")
+async def build_gitlab_plan(request: Request, payload: dict | None = None) -> dict:
+    user = _require_session_user(request)
+    request_payload = await _collect_request_payload(request, payload)
+    source_kind = str(request_payload.get("source_kind", "")).strip().lower()
+    source_id = str(request_payload.get("source_id", "")).strip()
+    assignee_map = request_payload.get("assignee_map", {})
+    if not source_kind or not source_id:
+        raise HTTPException(status_code=400, detail="source_kind and source_id are required.")
+
+    if source_kind == "live":
+        record = _owned_live_session(source_id, user)
+        source = {
+            "decisions": record.get("state", {}).get("decisions", []),
+            "action_items": record.get("state", {}).get("action_items", []),
+            "problems": record.get("state", {}).get("problems", []),
+            "discussion_points": record.get("state", {}).get("discussion_points", []),
+        }
+        meeting_title = str(record.get("title") or f"Live Meeting {source_id}")
+    elif source_kind == "meeting":
+        record = _resolve_owned_meeting_record(int(source_id), user)
+        source, meeting_title = _recorded_meeting_to_execution_source(record)
+    else:
+        raise HTTPException(status_code=400, detail="source_kind must be 'live' or 'meeting'.")
+
+    plan = build_gitlab_execution_plan(
+        source,
+        source_kind=source_kind,
+        source_id=source_id,
+        meeting_title=meeting_title,
+        assignee_map=assignee_map if isinstance(assignee_map, dict) else {},
+    )
+    sync_id = save_gitlab_sync(
+        GITLAB_DB_PATH,
+        source_kind=source_kind,
+        source_id=source_id,
+        project_ref=str(request_payload.get("project_id", "") or ""),
+        dry_run=True,
+        plan=plan,
+        sync_result=None,
+    )
+    return {"plan": plan, "sync_record_id": sync_id, "mode": "dry-run"}
+
+
+@app.post("/api/v1/gitlab/sync")
+async def sync_gitlab_plan(request: Request, payload: dict | None = None) -> dict:
+    user = _require_session_user(request)
+    request_payload = await _collect_request_payload(request, payload)
+    source_kind = str(request_payload.get("source_kind", "")).strip().lower()
+    source_id = str(request_payload.get("source_id", "")).strip()
+    assignee_map = request_payload.get("assignee_map", {})
+    connection = request_payload.get("connection", {})
+    if not isinstance(connection, dict) or not connection:
+        flat_connection = {
+            "base_url": str(request_payload.get("gitlab_base_url", "") or "").strip(),
+            "project_id": str(request_payload.get("gitlab_project_id", "") or "").strip(),
+            "private_token": str(request_payload.get("gitlab_private_token", "") or "").strip(),
+        }
+        if any(flat_connection.values()):
+            connection = flat_connection
+    if not source_kind or not source_id:
+        raise HTTPException(status_code=400, detail="source_kind and source_id are required.")
+
+    if source_kind == "live":
+        record = _owned_live_session(source_id, user)
+        source = {
+            "decisions": record.get("state", {}).get("decisions", []),
+            "action_items": record.get("state", {}).get("action_items", []),
+            "problems": record.get("state", {}).get("problems", []),
+            "discussion_points": record.get("state", {}).get("discussion_points", []),
+        }
+        meeting_title = str(record.get("title") or f"Live Meeting {source_id}")
+    elif source_kind == "meeting":
+        record = _resolve_owned_meeting_record(int(source_id), user)
+        source, meeting_title = _recorded_meeting_to_execution_source(record)
+    else:
+        raise HTTPException(status_code=400, detail="source_kind must be 'live' or 'meeting'.")
+
+    plan = build_gitlab_execution_plan(
+        source,
+        source_kind=source_kind,
+        source_id=source_id,
+        meeting_title=meeting_title,
+        assignee_map=assignee_map if isinstance(assignee_map, dict) else {},
+    )
+    runtime_config = default_config()
+    sync_result = sync_plan_to_gitlab(plan, runtime_config, connection_overrides=connection if isinstance(connection, dict) else {})
+    sync_id = save_gitlab_sync(
+        GITLAB_DB_PATH,
+        source_kind=source_kind,
+        source_id=source_id,
+        project_ref=str((connection or {}).get("project_id", "") if isinstance(connection, dict) else ""),
+        dry_run=sync_result.get("status") != "synced",
+        plan=plan,
+        sync_result=sync_result,
+    )
+    return {"plan": plan, "sync_result": sync_result, "sync_record_id": sync_id}
 
 
 def parse_args() -> argparse.Namespace:

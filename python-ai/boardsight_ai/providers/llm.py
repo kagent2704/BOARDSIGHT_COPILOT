@@ -63,3 +63,34 @@ def summarize(text: str, config: AppConfig) -> tuple[str, str]:
             pass
 
     return "Summary unavailable because the transformer summarization model is not loaded.", "model-unavailable"
+
+
+def generate_text(prompt: str, config: AppConfig, max_new_tokens: int = 144, min_new_tokens: int = 24) -> tuple[str, str]:
+    summarizer = _summarizer()
+    if summarizer is not None:
+        try:
+            tokenizer, model, torch, device, model_name = summarizer
+            normalized_prompt = " ".join(str(prompt or "").split())
+            inputs = tokenizer(
+                normalized_prompt,
+                return_tensors="pt",
+                truncation=True,
+                max_length=512,
+            )
+            if torch is not None and device != "cpu":
+                inputs = {key: value.to(device) for key, value in inputs.items()}
+            generated = model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                min_new_tokens=min_new_tokens,
+                do_sample=False,
+                num_beams=4,
+                no_repeat_ngram_size=3,
+            )
+            text = tokenizer.decode(generated[0], skip_special_tokens=True).strip()
+            if text:
+                return text, f"transformers:{model_name}"
+        except Exception:
+            pass
+
+    return "", "model-unavailable"

@@ -2,6 +2,10 @@
 
 BoardSight is a multimodal meeting intelligence system for uploaded meeting recordings. It analyzes speech, speaker activity, visual artifacts, decision points, workflow transitions, and participant emotion/attention signals to produce structured outputs for review and export.
 
+The agentic upgrade path is documented in [AGENTIC_ARCHITECTURE.md](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT_CV_AGENTIC/AGENTIC_ARCHITECTURE.md). The short version: BoardSight becomes the structured meeting-intelligence backend, while Google Cloud Agent Builder orchestrates actions and GitLab MCP executes approved work.
+
+The concrete cloud rollout plan now lives in [docs/GOOGLE_CLOUD_AGENT_IMPLEMENTATION_PLAN.md](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT_CV_AGENTIC/docs/GOOGLE_CLOUD_AGENT_IMPLEMENTATION_PLAN.md), and the first Agent Builder-facing tool contract is documented in [docs/AGENT_BUILDER_TOOLKIT.md](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT_CV_AGENTIC/docs/AGENT_BUILDER_TOOLKIT.md).
+
 The current codebase follows a deep-learning-only detection policy. If a required model is unavailable, the pipeline reports that feature as unavailable instead of falling back to heuristics.
 
 See [PROJECT_ALIGNMENT.md](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT/docs/PROJECT_ALIGNMENT.md) for the design direction that supersedes older papers and SRS language.
@@ -164,6 +168,8 @@ The project now defaults to faster CPU-friendly settings:
 - `faster-whisper` model defaults to `tiny.en`
 - diarization is disabled by default for speed
 - visual, attention, face, and workflow passes are sample-capped
+- decision, visual, and attention stages can run in parallel
+- recorded analysis profiles now gate OCR/caption enrichment so fast runs do not pay for deep extraction by default
 - all configured model-backed stages still run; the main speedup path is lighter sampling plus optional clip-range preprocessing before analysis
 
 Useful environment variables:
@@ -189,6 +195,13 @@ $env:BOARDSIGHT_MAX_FACE_SAMPLES="1"
 $env:BOARDSIGHT_MAX_WORKFLOW_SEGMENTS="8"
 ```
 
+Available analysis profiles in the UI and API:
+
+- `recorded-fast`: best for demo speed and iterative review
+- `recorded-balanced`: moderate enrichment with conservative sampling
+- `recorded-deep`: richer visual evidence extraction for final review
+- `live`: intended for lower-latency live meeting use
+
 Slower, richer profile:
 
 ```powershell
@@ -205,6 +218,10 @@ Pipeline output JSON now includes stage timing metadata under:
 
 `metadata.performance_report.stage_timings_seconds`
 
+Agent-ready handoff data now also lives under:
+
+`metadata.agentic_contract`
+
 Budget tracking and any budget-protection skips are also recorded under:
 
 `metadata.analysis_range`
@@ -218,6 +235,39 @@ The upload screen now supports optional `Start Time` and `End Time` inputs.
 - Leave both blank to analyze the full video.
 - Enter `mm:ss`, `hh:mm:ss`, or raw seconds to analyze only that portion.
 - BoardSight performs fast FFmpeg-based clip preprocessing first, then runs the full deep-learning pipeline on the selected segment.
+
+## Live Meeting Mode
+
+BoardSight now includes a live meeting session flow for fast agent-style monitoring.
+
+- Start a live session from the `Live Meeting` view in the web app
+- Choose `Share Tab or Screen + Audio` for whole-meeting capture, or `Microphone Only` as a fallback
+- BoardSight ingests rolling media chunks, transcribes them, and updates:
+  - rolling meeting summary
+  - problems and risks
+  - decisions
+  - action items
+  - suggestions
+  - meeting outcomes after finalization
+
+Important notes:
+
+- The currently running AI service and Java web app must be restarted after pulling these changes
+- For the best live capture, share the meeting tab with audio enabled
+- Live mode is transcript-first right now; video understanding for live sessions is not yet streamed frame-by-frame
+
+## Agent Builder Endpoints
+
+BoardSight now exposes an agent-facing API layer intended for Google Cloud Agent Builder:
+
+- `GET /api/v1/agent/capabilities`
+- `GET /api/v1/agent/sources`
+- `GET /api/v1/agent/context/{source_kind}/{source_id}`
+- `POST /api/v1/agent/execution/preview`
+- `POST /api/v1/agent/execution/approve`
+- `GET /api/v1/agent/execution/{approval_id}`
+
+These endpoints are approval-aware and designed to keep GitLab writes out of the reasoning step until a human has approved the generated plan.
 
 ## Known Notes
 

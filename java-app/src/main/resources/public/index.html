@@ -72,6 +72,7 @@
               <button class="nav-item active" data-view="dashboard">Home</button>
               <button class="nav-item" data-view="meetings">Meetings</button>
               <button class="nav-item" data-view="analyze">Upload & Analyze</button>
+              <button class="nav-item" data-view="live">Live Meeting</button>
               <button class="nav-item" data-view="trace">Decision Trace</button>
               <button class="nav-item" data-view="workflow">Workflow Modelling</button>
             </div>
@@ -244,6 +245,13 @@
                   <span>MP4 or other browser-supported video formats</span>
                 </label>
                 <div class="analysis-range-grid">
+                  <label>Analysis Profile
+                    <select id="analysisProfileInput">
+                      <option value="recorded-fast" selected>Recorded Fast</option>
+                      <option value="recorded-balanced">Recorded Balanced</option>
+                      <option value="recorded-deep">Recorded Deep</option>
+                    </select>
+                  </label>
                   <label>Start Time
                     <input type="text" id="analysisStartInput" placeholder="00:00 or 00:10:00">
                   </label>
@@ -251,8 +259,121 @@
                     <input type="text" id="analysisEndInput" placeholder="Leave blank for full video">
                   </label>
                 </div>
-                <p class="muted range-note">All deep learning stages still run. These fields only choose which part of the video gets analyzed.</p>
+                <p class="muted range-note">Recorded Fast trims OCR and extra sampling for speed. Use Recorded Deep when you need richer visual evidence extraction.</p>
                 <div id="uploadStatus" class="upload-status">No upload in progress.</div>
+              </div>
+            </article>
+          </section>
+
+          <section id="liveView" class="content-view hidden">
+            <article class="panel live-layout">
+              <div class="panel-title-row">
+                <div>
+                  <h3>Live Meeting Agent</h3>
+                  <p class="muted">Capture a live meeting, track decisions and blockers as they happen, and finish with an execution-ready wrap-up.</p>
+                </div>
+                <span id="liveStatusBadge" class="meeting-pill">Idle</span>
+              </div>
+              <div class="live-control-grid">
+                <div class="panel nested live-control-panel">
+                  <label>Session Title
+                    <input type="text" id="liveTitleInput" placeholder="Board budget review, sprint standup, hiring sync...">
+                  </label>
+                  <label>Capture Source
+                    <select id="liveSourceInput">
+                      <option value="display-audio">Share Tab or Screen + Audio (Recommended)</option>
+                      <option value="microphone">Microphone Only</option>
+                    </select>
+                  </label>
+                  <label>Live Analysis Profile
+                    <select id="liveProfileInput">
+                      <option value="live" selected>Live</option>
+                      <option value="recorded-fast">Fast Fallback</option>
+                    </select>
+                  </label>
+                  <div class="button-row">
+                    <button id="startLiveBtn" class="primary-btn">Start Live Session</button>
+                    <button id="stopLiveBtn" class="ghost-btn">Finalize Session</button>
+                  </div>
+                  <div id="liveStatusText" class="upload-status">No live meeting session is running.</div>
+                </div>
+                <div class="panel nested live-overview-panel">
+                  <div class="speaker-row"><span>Session</span><strong id="liveSessionId">--</strong></div>
+                  <div class="speaker-row"><span>Transcript Segments</span><strong id="liveSegmentCount">0</strong></div>
+                  <div class="speaker-row"><span>Decisions</span><strong id="liveDecisionCount">0</strong></div>
+                  <div class="speaker-row"><span>Action Items</span><strong id="liveActionCount">0</strong></div>
+                  <div class="speaker-row"><span>Problems</span><strong id="liveProblemCount">0</strong></div>
+                  <div class="speaker-row"><span>Duration</span><strong id="liveDuration">00:00</strong></div>
+                </div>
+              </div>
+              <div class="live-grid">
+                <div class="panel nested">
+                  <h4>Rolling Summary</h4>
+                  <p id="liveSummaryText" class="muted">Start a session to generate live meeting context.</p>
+                </div>
+                <div class="panel nested">
+                  <h4>Suggestions</h4>
+                  <div id="liveSuggestions"></div>
+                </div>
+              </div>
+              <div class="live-grid">
+                <div class="panel nested">
+                  <h4>Problems and Risks</h4>
+                  <div id="liveProblems"></div>
+                </div>
+                <div class="panel nested">
+                  <h4>Decisions and To-Dos</h4>
+                  <div id="liveActions"></div>
+                </div>
+              </div>
+              <div class="live-grid">
+                <div class="panel nested">
+                  <h4>Discussion Points</h4>
+                  <div id="liveDiscussionPoints"></div>
+                </div>
+                <div class="panel nested">
+                  <h4>Meeting Outcomes</h4>
+                  <div id="liveOutcomes"></div>
+                </div>
+              </div>
+              <div class="live-grid">
+                <div class="panel nested">
+                  <h4>Live Visual Understanding</h4>
+                  <div id="liveVisualArtifacts"></div>
+                </div>
+                <div class="panel nested">
+                  <h4>Presentation and Screen Context</h4>
+                  <div id="livePresentationInsights"></div>
+                </div>
+              </div>
+              <div class="panel nested">
+                <h4>Live Transcript</h4>
+                <div id="liveTranscript" class="transcript-list"><div class="empty-state">Transcript chunks will appear here during the meeting.</div></div>
+              </div>
+              <div class="panel nested">
+                <div class="panel-title-row">
+                  <div>
+                    <h4>GitLab Execution</h4>
+                    <p class="muted">Turn this meeting into issues, dependencies, and milestones.</p>
+                  </div>
+                  <div class="button-row">
+                    <button id="previewGitlabBtn" class="ghost-btn">Preview GitLab Plan</button>
+                    <button id="syncGitlabBtn" class="primary-btn">Sync to GitLab</button>
+                  </div>
+                </div>
+                <div class="analysis-range-grid">
+                  <label>GitLab Base URL
+                    <input type="text" id="gitlabBaseUrlInput" placeholder="https://gitlab.com">
+                  </label>
+                  <label>Project ID or Path
+                    <input type="text" id="gitlabProjectIdInput" placeholder="group/project or numeric id">
+                  </label>
+                  <label>Private Token
+                    <input type="password" id="gitlabTokenInput" placeholder="Optional if env vars are already set">
+                  </label>
+                </div>
+                <div id="gitlabStatusText" class="upload-status">No GitLab execution plan has been generated yet.</div>
+                <div id="gitlabPlanPreview"></div>
               </div>
             </article>
           </section>

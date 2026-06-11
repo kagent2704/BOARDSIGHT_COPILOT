@@ -265,8 +265,9 @@ def run(video_path: Path, config: AppConfig) -> tuple[list[VisualArtifact], list
         content_text = ""
         visual_caption = ""
         if _should_extract_content(artifact_label, display_label):
-            content_text = _extract_content_text(frame, cv2)
-            if not content_text:
+            if config.enable_visual_ocr:
+                content_text = _extract_content_text(frame, cv2)
+            if config.enable_visual_caption and not content_text:
                 visual_caption, _ = _extract_visual_caption(image)
         content_insight = _build_content_insight(artifact_label, display_label, content_text, visual_caption, detections)
         content_summary = _build_content_summary(config, display_label, display_score, detections, content_text, visual_caption)

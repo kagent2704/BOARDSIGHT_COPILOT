@@ -31,6 +31,12 @@ def init_storage(database_path: Path) -> None:
                 productivity_score REAL DEFAULT 0,
                 execution_readiness REAL DEFAULT 0,
                 dominance_ratio REAL DEFAULT 0,
+                analysis_profile TEXT,
+                source_mode TEXT,
+                run_status TEXT DEFAULT 'completed',
+                execution_task_count INTEGER DEFAULT 0,
+                risk_signal_count INTEGER DEFAULT 0,
+                contract_version TEXT,
                 result_json TEXT NOT NULL,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
@@ -58,6 +64,12 @@ def init_storage(database_path: Path) -> None:
             "productivity_score": "REAL DEFAULT 0",
             "execution_readiness": "REAL DEFAULT 0",
             "dominance_ratio": "REAL DEFAULT 0",
+            "analysis_profile": "TEXT",
+            "source_mode": "TEXT",
+            "run_status": "TEXT DEFAULT 'completed'",
+            "execution_task_count": "INTEGER DEFAULT 0",
+            "risk_signal_count": "INTEGER DEFAULT 0",
+            "contract_version": "TEXT",
         }
         for column_name, column_type in required_columns.items():
             if column_name not in existing_columns:
@@ -84,6 +96,8 @@ def save_meeting_result(
         if result.workflow_model.prioritized_decisions
         else None
     )
+    agentic_contract = result.metadata.get("agentic_contract", {}) if isinstance(result.metadata, dict) else {}
+    risk_signals = agentic_contract.get("entities", {}).get("risk_signals", []) if isinstance(agentic_contract, dict) else []
     with sqlite3.connect(database_path) as connection:
         cursor = connection.execute(
             """
@@ -105,8 +119,14 @@ def save_meeting_result(
                 productivity_score,
                 execution_readiness,
                 dominance_ratio,
+                analysis_profile,
+                source_mode,
+                run_status,
+                execution_task_count,
+                risk_signal_count,
+                contract_version,
                 result_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 user_id,
@@ -126,6 +146,12 @@ def save_meeting_result(
                 result.meeting_scores.productivity_score,
                 result.meeting_scores.execution_readiness,
                 top_speaker_ratio,
+                result.metadata.get("analysis_profile"),
+                result.metadata.get("source_mode"),
+                "completed",
+                len(result.workflow_model.execution_plan),
+                len(risk_signals),
+                agentic_contract.get("contract_version"),
                 payload,
             ),
         )
@@ -154,6 +180,12 @@ def list_meeting_results(database_path: Path, user_id: int | None = None) -> lis
             productivity_score,
             execution_readiness,
             dominance_ratio,
+            analysis_profile,
+            source_mode,
+            run_status,
+            execution_task_count,
+            risk_signal_count,
+            contract_version,
             created_at
         FROM meetings
     """

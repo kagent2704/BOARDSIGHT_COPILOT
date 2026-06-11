@@ -8,6 +8,7 @@ const state = {
   meetings: [],
   currentMeetingId: null,
   currentMeeting: null,
+  liveSession: null,
   sessionHasProcessed: false,
   authMode: "signin",
   currentUser: DEFAULT_USER,
@@ -56,6 +57,45 @@ const exportTraceBtn = document.getElementById("exportTraceBtn");
 const processingOverlay = document.getElementById("processingOverlay");
 const analysisStartInput = document.getElementById("analysisStartInput");
 const analysisEndInput = document.getElementById("analysisEndInput");
+const analysisProfileInput = document.getElementById("analysisProfileInput");
+const liveTitleInput = document.getElementById("liveTitleInput");
+const liveSourceInput = document.getElementById("liveSourceInput");
+const liveProfileInput = document.getElementById("liveProfileInput");
+const startLiveBtn = document.getElementById("startLiveBtn");
+const stopLiveBtn = document.getElementById("stopLiveBtn");
+const liveStatusBadge = document.getElementById("liveStatusBadge");
+const liveStatusText = document.getElementById("liveStatusText");
+const liveSessionId = document.getElementById("liveSessionId");
+const liveSegmentCount = document.getElementById("liveSegmentCount");
+const liveDecisionCount = document.getElementById("liveDecisionCount");
+const liveActionCount = document.getElementById("liveActionCount");
+const liveProblemCount = document.getElementById("liveProblemCount");
+const liveDuration = document.getElementById("liveDuration");
+const liveSummaryText = document.getElementById("liveSummaryText");
+const liveSuggestions = document.getElementById("liveSuggestions");
+const liveProblems = document.getElementById("liveProblems");
+const liveActions = document.getElementById("liveActions");
+const liveDiscussionPoints = document.getElementById("liveDiscussionPoints");
+const liveOutcomes = document.getElementById("liveOutcomes");
+const liveVisualArtifacts = document.getElementById("liveVisualArtifacts");
+const livePresentationInsights = document.getElementById("livePresentationInsights");
+const liveTranscript = document.getElementById("liveTranscript");
+const previewGitlabBtn = document.getElementById("previewGitlabBtn");
+const syncGitlabBtn = document.getElementById("syncGitlabBtn");
+const gitlabBaseUrlInput = document.getElementById("gitlabBaseUrlInput");
+const gitlabProjectIdInput = document.getElementById("gitlabProjectIdInput");
+const gitlabTokenInput = document.getElementById("gitlabTokenInput");
+const gitlabStatusText = document.getElementById("gitlabStatusText");
+const gitlabPlanPreview = document.getElementById("gitlabPlanPreview");
+
+let liveCaptureStream = null;
+let liveSourceStreams = [];
+let liveRecorder = null;
+let liveUploadChain = Promise.resolve();
+let liveClock = null;
+let liveStartedAtMs = 0;
+let liveChunkStartSeconds = 0;
+let liveFinalizeRequested = false;
 
 themeToggle.addEventListener("click", () => {
   state.theme = state.theme === "light" ? "dark" : "light";
@@ -112,6 +152,10 @@ signOutBtn.addEventListener("click", () => {
 });
 uploadInput.addEventListener("change", handleUpload);
 searchInput.addEventListener("input", renderMeetingList);
+startLiveBtn?.addEventListener("click", startLiveSession);
+stopLiveBtn?.addEventListener("click", () => stopLiveSession(false));
+previewGitlabBtn?.addEventListener("click", () => runGitlabPlan(true));
+syncGitlabBtn?.addEventListener("click", () => runGitlabPlan(false));
 
 document.querySelectorAll(".nav-item").forEach((button) => {
   button.addEventListener("click", () => setView(button.dataset.view));
@@ -136,6 +180,7 @@ exportTraceBtn.addEventListener("click", () => openReport("structured_report.pdf
 syncAuthMode();
 updateUserChip();
 bootstrapSession();
+renderLiveSession();
 
 async function bootstrapSession() {
   if (!state.authToken) {
@@ -279,6 +324,7 @@ function clearSession() {
   state.currentMeeting = null;
   state.currentMeetingId = null;
   state.meetings = [];
+  state.liveSession = null;
   state.sessionHasProcessed = false;
   state.currentUser = DEFAULT_USER;
   localStorage.removeItem("boardsight-token");
@@ -289,6 +335,8 @@ function clearSession() {
   renderCvFeaturePanel();
   renderTrace();
   renderWorkflow();
+  teardownLiveCapture();
+  renderLiveSession();
   loginView.classList.remove("hidden");
   appView.classList.add("hidden");
 }
@@ -843,6 +891,8 @@ async function handleUpload(event) {
   const formData = new FormData();
   formData.append("file", file);
   const requestUrl = new URL("/api/analyze", window.location.origin);
+  requestUrl.searchParams.set("analysis_profile", analysisProfileInput?.value || "recorded-fast");
+  requestUrl.searchParams.set("source_mode", "recorded");
   if (startSeconds !== null) {
     requestUrl.searchParams.set("start_seconds", String(startSeconds));
   }
@@ -1323,6 +1373,451 @@ function formatAnalysisRange(range) {
   const end = typeof range.end_seconds === "number" ? formatTime(range.end_seconds) : "End";
   const duration = typeof range.duration_seconds === "number" ? ` (${formatTime(range.duration_seconds)} selected)` : "";
   return `${start} to ${end}${duration}`;
+}
+
+async function startLiveSession() {
+  if (state.liveSession?.status === "active") {
+    liveStatusText.textContent = "A live session is already running.";
+    return;
+  }
+
+  if (!window.MediaRecorder || !navigator.mediaDevices) {
+    liveStatusText.textContent = "This browser does not support live media capture.";
+    return;
+  }
+
+  const title = (liveTitleInput?.value || "").trim() || `Live Meeting ${new Date().toLocaleTimeString()}`;
+  const sourceType = liveSourceInput?.value || "display-audio";
+  const analysisProfile = liveProfileInput?.value || "live";
+
+  startLiveBtn.disabled = true;
+  liveStatusText.textContent = "Starting live session...";
+
+  try {
+    const params = new URLSearchParams({
+      title,
+      source_type: sourceType,
+      analysis_profile: analysisProfile
+    });
+    const response = await apiFetch(`/api/live/start?${params.toString()}`, {
+      method: "POST"
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      liveStatusText.textContent = payload.detail || payload.error || "Failed to start live session.";
+      return;
+    }
+
+    state.liveSession = payload;
+    renderLiveSession();
+    setView("live");
+
+    liveCaptureStream = await createLiveCaptureStream(sourceType);
+    const recorderOptions = resolveRecorderOptions(liveCaptureStream);
+    liveRecorder = recorderOptions ? new MediaRecorder(liveCaptureStream, recorderOptions) : new MediaRecorder(liveCaptureStream);
+    liveStartedAtMs = Date.now();
+    liveChunkStartSeconds = 0;
+    liveFinalizeRequested = false;
+    liveUploadChain = Promise.resolve();
+
+    liveRecorder.ondataavailable = (event) => {
+      if (!event.data || event.data.size === 0 || !state.liveSession?.session_id) {
+        return;
+      }
+      const elapsedSeconds = Math.max(1, Math.round((Date.now() - liveStartedAtMs) / 1000));
+      const chunkStart = liveChunkStartSeconds;
+      const chunkEnd = Math.max(chunkStart + 1, elapsedSeconds);
+      liveChunkStartSeconds = chunkEnd;
+      liveUploadChain = liveUploadChain
+        .then(() => uploadLiveChunk(event.data, chunkStart, chunkEnd))
+        .catch((error) => {
+          liveStatusText.textContent = error?.message || "Live chunk upload failed.";
+        });
+    };
+
+    liveRecorder.onstop = async () => {
+      await liveUploadChain;
+      await finalizeLiveSession();
+      teardownLiveCapture();
+    };
+
+    try {
+      liveRecorder.start(15000);
+    } catch (error) {
+      throw new Error(`Unable to start live recording: ${error?.message || "MediaRecorder could not start."}`);
+    }
+    startLiveClock();
+    const audioTracks = liveCaptureStream.getAudioTracks().length;
+    const videoTracks = liveCaptureStream.getVideoTracks().length;
+    liveStatusText.textContent = `Live session is running. Capturing ${audioTracks} audio track(s) and ${videoTracks} video track(s).`;
+  } catch (error) {
+    teardownLiveCapture();
+    state.liveSession = null;
+    renderLiveSession();
+    liveStatusText.textContent = error?.message || "Unable to start live capture.";
+  } finally {
+    startLiveBtn.disabled = false;
+  }
+}
+
+async function stopLiveSession(forceImmediate) {
+  if (!state.liveSession?.session_id) {
+    return;
+  }
+  liveFinalizeRequested = true;
+  stopLiveBtn.disabled = true;
+  liveStatusText.textContent = "Finalizing live session...";
+
+  if (!forceImmediate && liveRecorder && liveRecorder.state !== "inactive") {
+    try {
+      liveRecorder.stop();
+    } catch {
+      await finalizeLiveSession();
+      teardownLiveCapture();
+    }
+    return;
+  }
+
+  await finalizeLiveSession();
+  teardownLiveCapture();
+}
+
+async function finalizeLiveSession() {
+  if (!state.liveSession?.session_id) {
+    stopLiveBtn.disabled = false;
+    return;
+  }
+
+  try {
+    const response = await apiFetch(`/api/live/${encodeURIComponent(state.liveSession.session_id)}/finalize`, {
+      method: "POST"
+    });
+    const payload = await response.json();
+    if (response.ok) {
+      state.liveSession = payload.final_result || payload;
+      renderLiveSession();
+      liveStatusText.textContent = "Live session finalized. Final meeting summary and outcomes are ready.";
+    } else {
+      liveStatusText.textContent = payload.detail || payload.error || "Finalization failed.";
+    }
+  } catch (error) {
+    liveStatusText.textContent = error?.message || "Finalization failed.";
+  } finally {
+    stopLiveBtn.disabled = false;
+  }
+}
+
+async function uploadLiveChunk(blob, chunkStartSeconds, chunkEndSeconds) {
+  if (!state.liveSession?.session_id) {
+    return;
+  }
+  const formData = new FormData();
+  formData.append("file", blob, `live-chunk-${chunkStartSeconds}.webm`);
+  formData.append("chunk_start_seconds", String(chunkStartSeconds));
+  formData.append("chunk_end_seconds", String(chunkEndSeconds));
+
+  const response = await apiFetch(`/api/live/${encodeURIComponent(state.liveSession.session_id)}/chunk`, {
+    method: "POST",
+    body: formData
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.detail || payload.error || "Live chunk processing failed.");
+  }
+  state.liveSession = payload;
+  renderLiveSession();
+}
+
+async function createLiveCaptureStream(sourceType) {
+  if (sourceType === "microphone") {
+    const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    liveSourceStreams = [micStream];
+    return micStream;
+  }
+
+  const displayStream = await navigator.mediaDevices.getDisplayMedia({
+    video: true,
+    audio: true
+  });
+  liveSourceStreams = [displayStream];
+
+  if (displayStream.getAudioTracks().length > 0) {
+    return displayStream;
+  }
+
+  const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  liveSourceStreams.push(micStream);
+  const merged = new MediaStream([
+    ...displayStream.getVideoTracks(),
+    ...micStream.getAudioTracks()
+  ]);
+  return merged;
+}
+
+function resolveRecorderOptions(stream) {
+  const hasVideo = (stream?.getVideoTracks?.() || []).length > 0;
+  const candidates = hasVideo
+    ? [
+        "video/webm;codecs=vp9,opus",
+        "video/webm;codecs=vp8,opus",
+        "video/webm",
+        "audio/webm;codecs=opus",
+        "audio/webm"
+      ]
+    : [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "video/webm;codecs=vp8,opus",
+        "video/webm"
+      ];
+  for (const mimeType of candidates) {
+    if (MediaRecorder.isTypeSupported?.(mimeType)) {
+      return { mimeType };
+    }
+  }
+  return null;
+}
+
+function startLiveClock() {
+  stopLiveClock();
+  liveClock = window.setInterval(() => {
+    if (liveStartedAtMs > 0) {
+      const elapsed = Math.max(0, Math.round((Date.now() - liveStartedAtMs) / 1000));
+      liveDuration.textContent = formatTime(elapsed);
+    }
+  }, 1000);
+}
+
+function stopLiveClock() {
+  if (liveClock) {
+    window.clearInterval(liveClock);
+    liveClock = null;
+  }
+}
+
+function teardownLiveCapture() {
+  stopLiveClock();
+  if (liveCaptureStream) {
+    liveCaptureStream.getTracks().forEach((track) => track.stop());
+    liveCaptureStream = null;
+  }
+  for (const stream of liveSourceStreams) {
+    try {
+      stream.getTracks().forEach((track) => track.stop());
+    } catch {}
+  }
+  liveSourceStreams = [];
+  liveRecorder = null;
+  liveStartedAtMs = 0;
+  liveChunkStartSeconds = 0;
+}
+
+function renderLiveSession() {
+  const session = state.liveSession;
+  if (!session) {
+    liveStatusBadge.textContent = "Idle";
+    liveSessionId.textContent = "--";
+    liveSegmentCount.textContent = "0";
+    liveDecisionCount.textContent = "0";
+    liveActionCount.textContent = "0";
+    liveProblemCount.textContent = "0";
+    liveDuration.textContent = "00:00";
+    liveSummaryText.textContent = "Start a session to generate live meeting context.";
+    liveSuggestions.innerHTML = `<div class="empty-state">Suggestions will appear during the meeting.</div>`;
+    liveProblems.innerHTML = `<div class="empty-state">Problems and risks will appear when they are detected.</div>`;
+    liveActions.innerHTML = `<div class="empty-state">Decisions and to-dos will appear as the meeting progresses.</div>`;
+    liveDiscussionPoints.innerHTML = `<div class="empty-state">Discussion points will be extracted from the live transcript.</div>`;
+    liveOutcomes.innerHTML = `<div class="empty-state">Meeting outcomes will populate when the session is finalized.</div>`;
+    liveVisualArtifacts.innerHTML = `<div class="empty-state">Screen-share and visual evidence will appear when live video is available.</div>`;
+    livePresentationInsights.innerHTML = `<div class="empty-state">Presentation context will appear when slide or screen windows are detected.</div>`;
+    liveTranscript.innerHTML = `<div class="empty-state">Transcript chunks will appear here during the meeting.</div>`;
+    gitlabPlanPreview.innerHTML = `<div class="empty-state">Preview the GitLab execution plan after the meeting starts.</div>`;
+    return;
+  }
+
+  liveStatusBadge.textContent = capitalize(session.status || "active");
+  liveSessionId.textContent = session.session_id || session.storage?.session_id || "--";
+  liveSegmentCount.textContent = String(session.transcript?.length || 0);
+  liveDecisionCount.textContent = String(session.decisions?.length || 0);
+  liveActionCount.textContent = String(session.action_items?.length || 0);
+  liveProblemCount.textContent = String(session.problems?.length || 0);
+  if (!liveClock && session.transcript?.length) {
+    const lastSegment = session.transcript[session.transcript.length - 1];
+    liveDuration.textContent = formatTime(Number(lastSegment.end || 0));
+  }
+  liveSummaryText.textContent = session.final_summary || session.rolling_summary || "Live analysis is in progress.";
+
+  liveSuggestions.innerHTML = renderLiveCardList(
+    session.suggestions || [],
+    (item) => ({
+      title: "Suggestion",
+      body: item
+    }),
+    "Suggestions will appear during the meeting."
+  );
+  liveProblems.innerHTML = renderLiveCardList(
+    session.problems || [],
+    (item) => ({
+      title: `${formatTime(Number(item.timestamp || 0))} | ${item.category || "Problem"}`,
+      body: item.text || "",
+      meta: `${item.speaker || "Unknown"} | confidence ${formatMetric(item.confidence || 0)}`
+    }),
+    "Problems and risks will appear when they are detected."
+  );
+  liveActions.innerHTML = renderLiveCardList(
+    (session.action_items || []).length > 0 ? session.action_items : (session.decisions || []),
+    (item) => ({
+      title: item.title || `${item.label || "Decision"} | ${item.speaker || "Unknown"}`,
+      body: item.notes || item.text || "",
+      meta: item.owner || item.timestamp || ""
+    }),
+    "Decisions and to-dos will appear as the meeting progresses."
+  );
+  liveDiscussionPoints.innerHTML = renderLiveCardList(
+    session.discussion_points || [],
+    (item) => ({
+      title: "Discussion Point",
+      body: item
+    }),
+    "Discussion points will be extracted from the live transcript."
+  );
+  liveOutcomes.innerHTML = renderLiveCardList(
+    session.meeting_outcomes || [],
+    (item) => ({
+      title: "Outcome",
+      body: item
+    }),
+    "Meeting outcomes will populate when the session is finalized."
+  );
+  liveVisualArtifacts.innerHTML = renderLiveCardList(
+    session.visual_artifacts || [],
+    (item) => ({
+      title: `${formatTime(Number(item.start_time || 0))} | ${normalizeCvLabel(item.artifact_type || "visual-artifact")}`,
+      body: item.content_insight || item.content_text || item.content_summary || item.display_mode || "Visual evidence detected.",
+      meta: `${normalizeCvLabel(item.display_mode || "screen-share")} | confidence ${formatMetric((Number(item.confidence || 0) * 100))}%`
+    }),
+    "Screen-share and visual evidence will appear when live video is available."
+  );
+  livePresentationInsights.innerHTML = renderLiveCardList(
+    session.presentation_windows || [],
+    (item) => ({
+      title: item.summary_source || "presentation-summary",
+      body: item.summary || "Presentation context unavailable.",
+      meta: `${Number(item.visual_window_count || 0)} visual windows`
+    }),
+    "Presentation context will appear when slide or screen windows are detected."
+  );
+  liveTranscript.innerHTML = renderLiveTranscript(session.transcript || []);
+  if (!state.liveSession?.gitlabPlan) {
+    gitlabPlanPreview.innerHTML = `<div class="empty-state">Preview the GitLab execution plan after the meeting starts.</div>`;
+  } else {
+    gitlabPlanPreview.innerHTML = renderGitlabPlan(state.liveSession.gitlabPlan, state.liveSession.gitlabSyncResult);
+  }
+}
+
+async function runGitlabPlan(dryRun) {
+  if (!state.liveSession?.session_id) {
+    gitlabStatusText.textContent = "Start or finalize a live session first.";
+    return;
+  }
+  gitlabStatusText.textContent = dryRun ? "Generating GitLab execution plan..." : "Syncing BoardSight actions to GitLab...";
+  const connection = {
+    base_url: (gitlabBaseUrlInput?.value || "").trim(),
+    project_id: (gitlabProjectIdInput?.value || "").trim(),
+    private_token: (gitlabTokenInput?.value || "").trim()
+  };
+  const payload = {
+    source_kind: "live",
+    source_id: state.liveSession.session_id,
+    connection,
+    assignee_map: {}
+  };
+  const params = new URLSearchParams({
+    source_kind: payload.source_kind,
+    source_id: payload.source_id
+  });
+  if (!dryRun) {
+    if (connection.base_url) params.set("gitlab_base_url", connection.base_url);
+    if (connection.project_id) params.set("gitlab_project_id", connection.project_id);
+    if (connection.private_token) params.set("gitlab_private_token", connection.private_token);
+  }
+  const url = dryRun ? `/api/gitlab/plan?${params.toString()}` : `/api/gitlab/sync?${params.toString()}`;
+  try {
+    const response = await apiFetch(url, {
+      method: "POST"
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      gitlabStatusText.textContent = result.detail || result.error || "GitLab execution failed.";
+      return;
+    }
+    state.liveSession.gitlabPlan = result.plan;
+    state.liveSession.gitlabSyncResult = result.sync_result || null;
+    gitlabPlanPreview.innerHTML = renderGitlabPlan(result.plan, result.sync_result || null);
+    gitlabStatusText.textContent = dryRun
+      ? "GitLab execution plan generated."
+      : (result.sync_result?.status === "synced"
+          ? "GitLab issues and links created successfully."
+          : "GitLab settings are missing, so a dry-run style result was returned.");
+  } catch (error) {
+    gitlabStatusText.textContent = error?.message || "GitLab execution failed.";
+  }
+}
+
+function renderGitlabPlan(plan, syncResult) {
+  if (!plan) {
+    return `<div class="empty-state">No GitLab plan available.</div>`;
+  }
+  const issues = plan.issues || [];
+  const links = plan.issue_links || [];
+  const syncSummary = syncResult
+    ? `<div class="live-card-item"><strong>Sync Status</strong><div>${escapeHtml(syncResult.status || "unknown")}</div><small>${escapeHtml(syncResult.reason || "")}</small></div>`
+    : "";
+  return `
+    <div class="live-card-list">
+      ${syncSummary}
+      <article class="live-card-item">
+        <strong>Milestone</strong>
+        <div>${escapeHtml(plan.milestone?.title || "Meeting milestone")}</div>
+        <small>${escapeHtml(plan.milestone?.due_date || "No due date inferred")}</small>
+      </article>
+      <article class="live-card-item">
+        <strong>Execution Graph</strong>
+        <div>${issues.length} issues, ${links.length} dependency links</div>
+        <small>${escapeHtml(plan.traceability?.generated_at || "")}</small>
+      </article>
+      ${issues.slice(0, 12).map((issue) => `
+        <article class="live-card-item">
+          <strong>${escapeHtml(issue.local_key)} | ${escapeHtml(issue.title)}</strong>
+          <div>${escapeHtml(issue.owner || "Unassigned")} | ${escapeHtml((issue.labels || []).join(", "))}</div>
+          <small>${escapeHtml(issue.due_date || "No due date")} ${issue.dependencies?.length ? `| depends on ${issue.dependencies.join(", ")}` : ""}</small>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderLiveCardList(items, toCard, emptyMessage) {
+  if (!items || items.length === 0) {
+    return `<div class="empty-state">${emptyMessage}</div>`;
+  }
+  return `<div class="live-card-list">${items.slice(0, 12).map((item) => {
+    const card = toCard(item);
+    return `<article class="live-card-item"><strong>${escapeHtml(card.title || "Item")}</strong><div>${escapeHtml(card.body || "")}</div>${card.meta ? `<small>${escapeHtml(card.meta)}</small>` : ""}</article>`;
+  }).join("")}</div>`;
+}
+
+function renderLiveTranscript(segments) {
+  if (!segments || segments.length === 0) {
+    return `<div class="empty-state">Transcript chunks will appear here during the meeting.</div>`;
+  }
+  return segments.slice(-24).map((segment) => `
+    <div class="transcript-row">
+      <strong>${formatTime(Number(segment.start || 0))}</strong>
+      <span>${escapeHtml(segment.speaker || "Live Speaker")}</span>
+      <div>${escapeHtml(segment.text || "")}</div>
+    </div>
+  `).join("");
 }
 
 async function apiFetch(url, options = {}) {

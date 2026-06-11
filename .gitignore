@@ -1,6 +1,7 @@
 # Build outputs
 output/
 java-app/build/
+java-app/build-*/
 java-app/*.jar
 java-app/java_sources.txt
 

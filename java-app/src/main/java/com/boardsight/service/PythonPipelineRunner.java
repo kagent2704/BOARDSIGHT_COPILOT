@@ -41,6 +41,9 @@ public final class PythonPipelineRunner {
 
         Files.createDirectories(outputDirectory);
         String aiServiceUrl = System.getenv("BOARDSIGHT_AI_URL");
+        if (aiServiceUrl == null || aiServiceUrl.isBlank()) {
+            aiServiceUrl = "http://127.0.0.1:8000";
+        }
         if (aiServiceUrl != null && !aiServiceUrl.isBlank()) {
             return runRemote(videoPath, outputDirectory, aiServiceUrl, authorizationHeader, startSeconds, endSeconds);
         }

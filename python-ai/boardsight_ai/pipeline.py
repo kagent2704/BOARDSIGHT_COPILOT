@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+from boardsight_ai.agentic_contract import build_agentic_contract
 from boardsight_ai.config import AppConfig, default_config
 from boardsight_ai.features import (
     attention_sentiment,
@@ -43,6 +45,14 @@ def _build_presentation_insights(
     visual_result: list[VisualArtifact],
     config: AppConfig,
 ) -> dict[str, Any]:
+    if not config.enable_presentation_summary:
+        return {
+            "summary": "Presentation summarization is disabled for this analysis profile.",
+            "summary_source": "profile-disabled",
+            "visual_window_count": len(visual_result),
+            "artifact_types": {},
+            "evidence": [],
+        }
     presentation_artifacts = [
         artifact
         for artifact in visual_result
@@ -112,6 +122,8 @@ def run_pipeline(
     output_dir: Path,
     config: AppConfig | None = None,
     analysis_range: dict[str, float | None] | None = None,
+    analysis_profile: str | None = None,
+    source_mode: str = "recorded",
 ) -> PipelineResult:
     resolved_config = config or default_config(output_root=output_dir)
     warnings: list[str] = []
@@ -128,13 +140,33 @@ def run_pipeline(
     transcript_result = timed("speaker_labeling", lambda: speaker_labeling.run(transcript_segments, resolved_config))
 
     speaker_result = timed("speaker_dominance", lambda: speaker_dominance.run(transcript_result.segments, resolved_config, video_path))
-    decision_events, decision_warnings = timed("decision_detection", lambda: decision_moments.run(transcript_result.segments, resolved_config))
+
+    with ThreadPoolExecutor(max_workers=max(1, resolved_config.max_parallel_workers)) as executor:
+        decision_future = executor.submit(
+            timed,
+            "decision_detection",
+            lambda: decision_moments.run(transcript_result.segments, resolved_config),
+        )
+        visual_future = executor.submit(
+            timed,
+            "visual_artifacts",
+            lambda: visual_artifacts.run(video_path, resolved_config),
+        )
+        attention_future = executor.submit(
+            timed,
+            "attention_sentiment",
+            lambda: attention_sentiment.run(transcript_result.segments, resolved_config, video_path),
+        )
+
+        decision_events, decision_warnings = decision_future.result()
+        visual_result, visual_warnings = visual_future.result()
+        attention_result = attention_future.result()
+
     warnings.extend(decision_warnings)
-    visual_result, visual_warnings = timed("visual_artifacts", lambda: visual_artifacts.run(video_path, resolved_config))
     warnings.extend(visual_warnings)
+
     workflow_result = timed("workflow_model", lambda: workflow_engine.run(transcript_result.segments, decision_events, visual_result, resolved_config))
     trace_result = timed("decision_traces", lambda: decision_trace.run(transcript_result.segments, decision_events, visual_result, workflow_result, resolved_config))
-    attention_result = timed("attention_sentiment", lambda: attention_sentiment.run(transcript_result.segments, resolved_config, video_path))
     meeting_scores = timed("meeting_scores", lambda: scoring.run(speaker_result, decision_events, attention_result, workflow_result, resolved_config))
     presentation_insights = timed(
         "presentation_insights",
@@ -143,6 +175,8 @@ def run_pipeline(
 
     metadata = {
         "video_probe": probe_video(video_path),
+        "analysis_profile": analysis_profile or resolved_config.default_analysis_profile,
+        "source_mode": source_mode,
         "analysis_range": analysis_range or {
             "start_seconds": None,
             "end_seconds": None,
@@ -169,6 +203,10 @@ def run_pipeline(
                 "max_workflow_segments": resolved_config.max_workflow_segments,
                 "faster_whisper_model": resolved_config.faster_whisper_model,
                 "enable_diarization": resolved_config.enable_diarization,
+                "enable_visual_ocr": resolved_config.enable_visual_ocr,
+                "enable_visual_caption": resolved_config.enable_visual_caption,
+                "enable_attention_analysis": resolved_config.enable_attention_analysis,
+                "max_parallel_workers": resolved_config.max_parallel_workers,
             },
             "target_accuracy_range": "85-90%",
             "runtime_profile": "fast-sampled-full-model-stack",
@@ -186,7 +224,7 @@ def run_pipeline(
         "presentation_insights": presentation_insights,
     }
 
-    return PipelineResult(
+    result = PipelineResult(
         input_video=str(video_path),
         transcript=transcript_result,
         speaker_dominance=speaker_result,
@@ -199,6 +237,14 @@ def run_pipeline(
         warnings=warnings,
         metadata=metadata,
     )
+    result.metadata["agentic_contract"] = build_agentic_contract(
+        result,
+        analysis_profile=(analysis_profile or resolved_config.default_analysis_profile or "recorded-fast"),
+        source_mode=source_mode,
+        contract_version=resolved_config.analysis_contract_version,
+    )
+
+    return result
 
 
 def write_result(result: PipelineResult, result_file: Path) -> Path:

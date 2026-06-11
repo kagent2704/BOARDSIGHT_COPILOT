@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-import json
+from functools import lru_cache
 from pathlib import Path
-import subprocess
-import sys
 
 from boardsight_ai.config import AppConfig
 from boardsight_ai.models import AttentionSentimentResult, TranscriptSegment
@@ -44,12 +42,13 @@ def _emotion_confidence(face_analysis: dict) -> float:
     return max(float(score) for score in emotions.values()) / 100.0
 
 
-def _attention_pipeline(config: AppConfig):
+@lru_cache(maxsize=2)
+def _attention_pipeline(model_name: str):
     transformers = optional_import("transformers")
     if transformers is None:
         return None
     try:
-        return transformers.pipeline("zero-shot-image-classification", model=config.image_classifier_model)
+        return transformers.pipeline("zero-shot-image-classification", model=model_name)
     except Exception:
         return None
 
@@ -59,107 +58,81 @@ def _run_deepface(
     transcript_segments: list[TranscriptSegment],
     config: AppConfig,
 ) -> AttentionSentimentResult | None:
-    if optional_import("deepface.DeepFace") is None:
+    deepface = optional_import("deepface.DeepFace")
+    if deepface is None:
         return None
-    if _attention_pipeline(config) is None:
+    classifier = _attention_pipeline(config.image_classifier_model)
+    if classifier is None:
+        return None
+    cv2 = optional_import("cv2")
+    pil = optional_import("PIL.Image")
+    if cv2 is None or pil is None:
         return None
 
-    script = f"""
-import json
-import sys
-from pathlib import Path
-for stream_name in ('stdout', 'stderr'):
-    stream = getattr(sys, stream_name, None)
-    reconfigure = getattr(stream, 'reconfigure', None)
-    if callable(reconfigure):
-        reconfigure(encoding='utf-8', errors='ignore')
-import cv2
-from PIL import Image
-from deepface import DeepFace
-from transformers import pipeline
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return None
 
-video_path = Path(r'''{str(video_path)}''')
-cap = cv2.VideoCapture(str(video_path))
-if not cap.isOpened():
-    print(json.dumps({{"samples": []}}))
-    raise SystemExit(0)
-
-attention_classifier = pipeline('zero-shot-image-classification', model={config.image_classifier_model!r})
-fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-sample_stride = max(1, int(fps * {config.video_sample_seconds}))
-frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-sample_indices = list(range(0, max(1, frame_count), sample_stride))[: {config.max_attention_samples}]
-samples = []
-
-for frame_index in sample_indices:
-    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
-    ret, frame = cap.read()
-    if not ret:
-        continue
-    timestamp = round(frame_index / fps, 2)
-    try:
-        analysis = DeepFace.analyze(
-            frame,
-            actions=['emotion'],
-            enforce_detection=False,
-            detector_backend={config.deepface_detector_backend!r},
-            silent=True,
-        )
-    except Exception:
-        continue
-    try:
-        image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        attention_output = attention_classifier(image, candidate_labels={ATTENTION_LABELS!r})
-        attention_top = attention_output[0] if attention_output else {{}}
-    except Exception:
-        continue
-    faces = analysis if isinstance(analysis, list) else [analysis]
-    faces = [item for item in faces if isinstance(item, dict)]
-    if not faces:
-        continue
-    def area(item):
-        region = item.get('region') or item.get('facial_area') or {{}}
-        return int(region.get('w', 0) or 0) * int(region.get('h', 0) or 0)
-    face = max(faces, key=area)
-    region = face.get('region') or face.get('facial_area') or {{}}
-    emotions = face.get('emotion', {{}})
-    samples.append({{
-        'timestamp': timestamp,
-        'dominant_emotion': str(face.get('dominant_emotion', 'neutral')).lower(),
-        'emotion_scores': emotions if isinstance(emotions, dict) else {{}},
-        'attention_label': str(attention_top.get('label', 'neutral meeting participant')),
-        'attention_score': float(attention_top.get('score', 0.0) or 0.0),
-        'region': {{
-            'x': int(region.get('x', 0) or 0),
-            'y': int(region.get('y', 0) or 0),
-            'w': int(region.get('w', 0) or 0),
-            'h': int(region.get('h', 0) or 0),
-        }},
-        'frame_width': int(frame.shape[1]),
-        'frame_height': int(frame.shape[0]),
-    }})
-
-cap.release()
-print(json.dumps({{'samples': samples}}))
-"""
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    sample_stride = max(1, int(fps * config.video_sample_seconds))
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    sample_indices = list(range(0, max(1, frame_count), sample_stride))[: config.max_attention_samples]
+    raw_samples: list[dict] = []
 
     try:
-        completed = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="ignore",
-            check=True,
-        )
-        stdout = completed.stdout or ""
-        json_start = stdout.find("{")
-        if json_start < 0:
-            return None
-        payload = json.loads(stdout[json_start:])
-        raw_samples = payload.get("samples", [])
-    except Exception:
-        return None
+        for frame_index in sample_indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+            ret, frame = cap.read()
+            if not ret:
+                continue
+            timestamp = round(frame_index / fps, 2)
+            try:
+                analysis = deepface.analyze(
+                    frame,
+                    actions=["emotion"],
+                    enforce_detection=False,
+                    detector_backend=config.deepface_detector_backend,
+                    silent=True,
+                )
+            except Exception:
+                continue
+
+            faces = analysis if isinstance(analysis, list) else [analysis]
+            faces = [item for item in faces if isinstance(item, dict)]
+            if not faces:
+                continue
+
+            try:
+                image = pil.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                attention_output = classifier(image, candidate_labels=ATTENTION_LABELS)
+                attention_top = attention_output[0] if attention_output else {}
+            except Exception:
+                continue
+
+            def area(item):
+                region = item.get("region") or item.get("facial_area") or {}
+                return int(region.get("w", 0) or 0) * int(region.get("h", 0) or 0)
+
+            face = max(faces, key=area)
+            region = face.get("region") or face.get("facial_area") or {}
+            emotions = face.get("emotion", {})
+            raw_samples.append(
+                {
+                    "timestamp": timestamp,
+                    "dominant_emotion": str(face.get("dominant_emotion", "neutral")).lower(),
+                    "emotion_scores": emotions if isinstance(emotions, dict) else {},
+                    "attention_label": str(attention_top.get("label", "neutral meeting participant")),
+                    "attention_score": float(attention_top.get("score", 0.0) or 0.0),
+                    "region": {
+                        "x": int(region.get("x", 0) or 0),
+                        "y": int(region.get("y", 0) or 0),
+                        "w": int(region.get("w", 0) or 0),
+                        "h": int(region.get("h", 0) or 0),
+                    },
+                }
+            )
+    finally:
+        cap.release()
 
     if not raw_samples:
         return None
@@ -279,6 +252,8 @@ def run(
     config: AppConfig,
     video_path: Path | None = None,
 ) -> AttentionSentimentResult:
+    if not config.enable_attention_analysis:
+        return _unavailable_result()
     if video_path is not None:
         model_result = _run_deepface(video_path, transcript_segments, config)
         if model_result is not None:

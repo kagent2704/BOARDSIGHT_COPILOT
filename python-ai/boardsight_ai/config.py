@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 
@@ -38,6 +38,16 @@ class AppConfig:
     max_workflow_segments: int = int(os.getenv("BOARDSIGHT_MAX_WORKFLOW_SEGMENTS", "12"))
     faster_whisper_model: str = os.getenv("BOARDSIGHT_FASTER_WHISPER_MODEL", "tiny.en")
     enable_diarization: bool = os.getenv("BOARDSIGHT_ENABLE_DIARIZATION", "false").lower() in {"1", "true", "yes", "on"}
+    enable_visual_ocr: bool = os.getenv("BOARDSIGHT_ENABLE_VISUAL_OCR", "false").lower() in {"1", "true", "yes", "on"}
+    enable_visual_caption: bool = os.getenv("BOARDSIGHT_ENABLE_VISUAL_CAPTION", "false").lower() in {"1", "true", "yes", "on"}
+    enable_attention_analysis: bool = os.getenv("BOARDSIGHT_ENABLE_ATTENTION_ANALYSIS", "true").lower() in {"1", "true", "yes", "on"}
+    enable_presentation_summary: bool = os.getenv("BOARDSIGHT_ENABLE_PRESENTATION_SUMMARY", "true").lower() in {"1", "true", "yes", "on"}
+    max_parallel_workers: int = int(os.getenv("BOARDSIGHT_MAX_PARALLEL_WORKERS", "3"))
+    default_analysis_profile: str = os.getenv("BOARDSIGHT_ANALYSIS_PROFILE", "recorded-fast")
+    analysis_contract_version: str = "2026-06-10"
+    gitlab_base_url: str | None = os.getenv("BOARDSIGHT_GITLAB_BASE_URL")
+    gitlab_project_id: str | None = os.getenv("BOARDSIGHT_GITLAB_PROJECT_ID")
+    gitlab_private_token: str | None = os.getenv("BOARDSIGHT_GITLAB_PRIVATE_TOKEN")
     llm_provider: str = os.getenv("BOARDSIGHT_LLM_PROVIDER", "transformers")
     openai_api_key: str | None = os.getenv("OPENAI_API_KEY")
 
@@ -48,3 +58,71 @@ def default_config(project_root: Path | None = None, output_root: Path | None = 
     resolved_output = (output_root or resolved_root / "output").resolve()
     resolved_output.mkdir(parents=True, exist_ok=True)
     return AppConfig(project_root=resolved_root, output_root=resolved_output)
+
+
+def resolve_runtime_config(
+    config: AppConfig,
+    analysis_profile: str | None = None,
+    source_mode: str | None = None,
+) -> AppConfig:
+    profile = (analysis_profile or config.default_analysis_profile or "recorded-fast").strip().lower()
+    source = (source_mode or "recorded").strip().lower()
+
+    profile_overrides: dict[str, dict[str, object]] = {
+        "recorded-fast": {
+            "video_sample_seconds": 30.0,
+            "visual_sample_seconds": 60.0,
+            "max_visual_samples": 1,
+            "max_attention_samples": 1,
+            "max_face_samples": 1,
+            "max_workflow_segments": 8,
+            "enable_visual_ocr": False,
+            "enable_visual_caption": False,
+            "enable_attention_analysis": True,
+            "enable_presentation_summary": True,
+        },
+        "recorded-balanced": {
+            "video_sample_seconds": 20.0,
+            "visual_sample_seconds": 45.0,
+            "max_visual_samples": 2,
+            "max_attention_samples": 1,
+            "max_face_samples": 1,
+            "max_workflow_segments": 12,
+            "enable_visual_ocr": False,
+            "enable_visual_caption": True,
+            "enable_attention_analysis": True,
+            "enable_presentation_summary": True,
+        },
+        "recorded-deep": {
+            "video_sample_seconds": 15.0,
+            "visual_sample_seconds": 25.0,
+            "max_visual_samples": 4,
+            "max_attention_samples": 3,
+            "max_face_samples": 2,
+            "max_workflow_segments": 24,
+            "enable_visual_ocr": True,
+            "enable_visual_caption": True,
+            "enable_attention_analysis": True,
+            "enable_presentation_summary": True,
+        },
+        "live": {
+            "video_sample_seconds": 10.0,
+            "visual_sample_seconds": 20.0,
+            "max_visual_samples": 1,
+            "max_attention_samples": 1,
+            "max_face_samples": 1,
+            "max_workflow_segments": 6,
+            "enable_visual_ocr": False,
+            "enable_visual_caption": False,
+            "enable_attention_analysis": True,
+            "enable_presentation_summary": True,
+        },
+    }
+    overrides = dict(profile_overrides.get(profile, profile_overrides["recorded-fast"]))
+
+    if source == "live":
+        live_defaults = profile_overrides["live"]
+        for key, value in live_defaults.items():
+            overrides.setdefault(key, value)
+
+    return replace(config, default_analysis_profile=profile, **overrides)

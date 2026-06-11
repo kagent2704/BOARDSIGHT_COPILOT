@@ -147,7 +147,7 @@ button:hover { transform: translateY(-1px); }
 .dashboard-main, .dashboard-bottom, .meeting-grid, .trace-grid, .workflow-grid, .settings-grid { display: grid; gap: var(--grid-gap); align-items: stretch; }
 .dashboard-main { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .dashboard-bottom { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-.chart-panel, .meeting-detail, .trace-layout, .workflow-layout, .admin-layout, .upload-layout { padding: 18px; }
+.chart-panel, .meeting-detail, .trace-layout, .workflow-layout, .admin-layout, .upload-layout, .live-layout { padding: 18px; }
 .chart-panel { min-height: 286px; }
 .dashboard-bottom > .panel {
   min-height: 360px;
@@ -244,6 +244,43 @@ button:hover { transform: translateY(-1px); }
   min-height: 320px; display: grid; place-items: center; background: radial-gradient(circle at top, rgba(69,104,255,0.1), transparent 32%), var(--surface-soft);
   border-radius: var(--radius-md);
   width: 100%;
+}
+.live-control-grid, .live-grid {
+  display: grid;
+  gap: var(--grid-gap);
+}
+.live-control-grid { grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr); }
+.live-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.live-control-panel, .live-overview-panel {
+  display: grid;
+  gap: 12px;
+}
+.live-overview-panel .speaker-row,
+.summary-box .speaker-row,
+.speaker-summary .speaker-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.live-overview-panel .speaker-row:last-child { border-bottom: 0; }
+.live-card-list {
+  display: grid;
+  gap: 10px;
+}
+.live-card-item {
+  padding: 12px;
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+}
+.live-card-item strong {
+  display: block;
+  margin-bottom: 6px;
+}
+.live-card-item small {
+  color: var(--muted);
 }
 .workflow-nodes { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; justify-content: center; }
 .workflow-node { padding: 10px 16px; border-radius: 14px; background: var(--surface-strong); border: 1px solid var(--border); }
@@ -561,7 +598,7 @@ button:hover { transform: translateY(-1px); }
 @media (max-width: 1400px) {
   .app-shell { grid-template-columns: 1fr; }
   .kpi-grid { grid-template-columns: repeat(2, 1fr); }
-  .dashboard-main, .dashboard-bottom, .meeting-grid, .trace-grid, .workflow-grid, .settings-grid { grid-template-columns: 1fr; }
+  .dashboard-main, .dashboard-bottom, .meeting-grid, .trace-grid, .workflow-grid, .settings-grid, .live-control-grid, .live-grid { grid-template-columns: 1fr; }
   .layout-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 920px) {
