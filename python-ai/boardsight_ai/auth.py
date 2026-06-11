@@ -140,3 +140,25 @@ def get_session_user(database_path: Path, token: str) -> dict | None:
         "display_name": row[3],
         "role": row[4],
     }
+
+
+def get_user_by_username(database_path: Path, username: str) -> dict | None:
+    init_auth_storage(database_path)
+    with sqlite3.connect(database_path) as connection:
+        row = connection.execute(
+            """
+            SELECT id, username, email, display_name, role
+            FROM users
+            WHERE LOWER(username) = LOWER(?)
+            """,
+            (username,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {
+        "user_id": int(row[0]),
+        "username": row[1],
+        "email": row[2],
+        "display_name": row[3],
+        "role": row[4],
+    }

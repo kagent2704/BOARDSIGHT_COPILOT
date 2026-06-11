@@ -48,6 +48,7 @@ class AppConfig:
     gitlab_base_url: str | None = os.getenv("BOARDSIGHT_GITLAB_BASE_URL")
     gitlab_project_id: str | None = os.getenv("BOARDSIGHT_GITLAB_PROJECT_ID")
     gitlab_private_token: str | None = os.getenv("BOARDSIGHT_GITLAB_PRIVATE_TOKEN")
+    agent_api_key: str | None = os.getenv("BOARDSIGHT_AGENT_API_KEY")
     llm_provider: str = os.getenv("BOARDSIGHT_LLM_PROVIDER", "transformers")
     openai_api_key: str | None = os.getenv("OPENAI_API_KEY")
 

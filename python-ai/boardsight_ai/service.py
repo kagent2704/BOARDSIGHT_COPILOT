@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import sqlite3
 import sys
 import tempfile
@@ -35,7 +36,7 @@ from boardsight_ai.agent_storage import (
     init_agent_storage,
     update_agent_execution_run,
 )
-from boardsight_ai.auth import authenticate_user, create_user, get_session_user, init_auth_storage
+from boardsight_ai.auth import authenticate_user, create_user, get_session_user, get_user_by_username, init_auth_storage
 from boardsight_ai.config import default_config, resolve_runtime_config
 from boardsight_ai.gitlab_execution import build_gitlab_execution_plan, sync_plan_to_gitlab
 from boardsight_ai.gitlab_storage import init_gitlab_storage, save_gitlab_sync
@@ -240,6 +241,27 @@ def _require_session_user(request: Request) -> dict:
     if user is None:
         raise HTTPException(status_code=401, detail="Invalid or expired session token.")
     return user
+
+
+def _require_agent_or_session_user(request: Request) -> dict:
+    auth_header = request.headers.get("authorization", "")
+    token = auth_header.removeprefix("Bearer ").strip() if auth_header else ""
+    if token:
+        user = get_session_user(AUTH_DB_PATH, token)
+        if user is not None:
+            return user
+
+    runtime_config = default_config()
+    expected_api_key = str(runtime_config.agent_api_key or "").strip()
+    provided_api_key = str(request.headers.get("X-BoardSight-Agent-Key", "") or "").strip()
+    if expected_api_key and provided_api_key and secrets.compare_digest(provided_api_key, expected_api_key):
+        agent_user = get_user_by_username(AUTH_DB_PATH, "admin")
+        if agent_user is not None:
+            return agent_user
+
+    if token:
+        raise HTTPException(status_code=401, detail="Invalid or expired session token.")
+    raise HTTPException(status_code=401, detail="Missing authorization token or agent API key.")
 
 
 def _summarize_meeting_row(row: dict) -> dict:
@@ -968,7 +990,7 @@ def finalize_live_session(session_id: str, request: Request) -> dict:
 
 @app.get("/api/v1/agent/capabilities")
 def agent_capabilities(request: Request) -> dict:
-    _require_session_user(request)
+    _require_agent_or_session_user(request)
     return {
         "agent_runtime": "google-cloud-agent-builder-target",
         "boardSight_role": "meeting-perception-and-execution-memory",
@@ -1015,7 +1037,7 @@ def agent_capabilities(request: Request) -> dict:
 
 @app.get("/api/v1/agent/sources")
 def agent_sources(request: Request) -> dict:
-    user = _require_session_user(request)
+    user = _require_agent_or_session_user(request)
     meeting_rows = list_meeting_results(MEETING_DB_PATH, user_id=int(user["user_id"]))
     live_items: list[dict[str, Any]] = []
     meetings: list[dict[str, Any]] = []
@@ -1038,13 +1060,13 @@ def agent_sources(request: Request) -> dict:
 
 @app.get("/api/v1/agent/context/{source_kind}/{source_id}")
 def agent_source_context(source_kind: str, source_id: str, request: Request) -> dict:
-    user = _require_session_user(request)
+    user = _require_agent_or_session_user(request)
     return _resolve_agent_source_context(source_kind, source_id, user)
 
 
 @app.post("/api/v1/agent/execution/preview")
 async def agent_execution_preview(request: Request, payload: dict | None = None) -> dict:
-    user = _require_session_user(request)
+    user = _require_agent_or_session_user(request)
     request_payload = await _collect_request_payload(request, payload)
     source_kind = str(request_payload.get("source_kind", "")).strip().lower()
     source_id = str(request_payload.get("source_id", "")).strip()
@@ -1094,7 +1116,7 @@ async def agent_execution_preview(request: Request, payload: dict | None = None)
 
 @app.get("/api/v1/agent/execution/{approval_id}")
 def agent_execution_status(approval_id: str, request: Request) -> dict:
-    _require_session_user(request)
+    _require_agent_or_session_user(request)
     record = get_agent_execution_run(AGENT_DB_PATH, approval_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Agent execution run not found.")
@@ -1113,7 +1135,7 @@ def agent_execution_status(approval_id: str, request: Request) -> dict:
 
 @app.post("/api/v1/agent/execution/approve")
 async def agent_execution_approve(request: Request, payload: dict | None = None) -> dict:
-    user = _require_session_user(request)
+    user = _require_agent_or_session_user(request)
     request_payload = await _collect_request_payload(request, payload)
     approval_id = str(request_payload.get("approval_id", "")).strip()
     if not approval_id:
