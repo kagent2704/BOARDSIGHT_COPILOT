@@ -3,7 +3,6 @@ services:
     runtime: docker
     name: boardsight-ai
     plan: free
-    rootDir: python-ai
     dockerfilePath: ./python-ai/Dockerfile
     dockerContext: ./python-ai
     healthCheckPath: /health
@@ -51,7 +50,6 @@ services:
     runtime: docker
     name: boardsight-web
     plan: free
-    rootDir: java-app
     dockerfilePath: ./java-app/Dockerfile
     dockerContext: ./java-app
     envVars:
