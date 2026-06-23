@@ -4,15 +4,17 @@ import argparse
 import json
 import os
 import secrets
-import sqlite3
 import sys
 import tempfile
 import threading
 import uuid
+from dataclasses import fields, is_dataclass
 from datetime import datetime
 from urllib.parse import unquote
 from pathlib import Path
 from typing import Any
+from typing import get_type_hints
+from typing import get_args, get_origin
 
 CURRENT_DIR = Path(__file__).resolve().parent
 PACKAGE_ROOT = CURRENT_DIR.parent
@@ -38,6 +40,7 @@ from boardsight_ai.agent_storage import (
 )
 from boardsight_ai.auth import authenticate_user, create_user, get_session_user, get_user_by_username, init_auth_storage
 from boardsight_ai.config import default_config, resolve_runtime_config
+from boardsight_ai.database import execute, fetchone
 from boardsight_ai.gitlab_execution import build_gitlab_execution_plan, sync_plan_to_gitlab
 from boardsight_ai.gitlab_storage import init_gitlab_storage, save_gitlab_sync
 from boardsight_ai.live_meeting import (
@@ -51,7 +54,8 @@ from boardsight_ai.live_meeting import (
 from boardsight_ai.live_storage import create_live_session, get_live_session, init_live_storage, parse_live_session_record, update_live_session
 from boardsight_ai.features import decision_moments, visual_artifacts, workflow_engine
 from boardsight_ai.features.scoring import _classifier as _scoring_classifier
-from boardsight_ai.providers.llm import _summarizer
+from boardsight_ai.models import PipelineResult
+from boardsight_ai.providers.llm import _summarizer, generate_text
 from boardsight_ai.providers.speech import _faster_whisper_model
 from boardsight_ai.storage import get_meeting_result, init_storage, list_meeting_results, save_meeting_result
 
@@ -78,24 +82,23 @@ create_user(
 
 
 def _assign_orphaned_runs_to_admin() -> None:
-    with sqlite3.connect(AUTH_DB_PATH) as auth_connection:
-        admin_row = auth_connection.execute(
-            "SELECT id, username FROM users WHERE username = ?",
-            ("admin",),
-        ).fetchone()
+    admin_row = fetchone(
+        AUTH_DB_PATH,
+        "SELECT id, username FROM users WHERE username = :username",
+        {"username": "admin"},
+    )
     if admin_row is None:
         return
 
-    with sqlite3.connect(MEETING_DB_PATH) as meeting_connection:
-        meeting_connection.execute(
-            """
-            UPDATE meetings
-            SET user_id = ?, username = COALESCE(username, ?)
-            WHERE user_id IS NULL
-            """,
-            (int(admin_row[0]), str(admin_row[1])),
-        )
-        meeting_connection.commit()
+    execute(
+        MEETING_DB_PATH,
+        """
+        UPDATE meetings
+        SET user_id = :user_id, username = COALESCE(username, :username)
+        WHERE user_id IS NULL
+        """,
+        {"user_id": int(admin_row["id"]), "username": str(admin_row["username"])},
+    )
 
 
 _assign_orphaned_runs_to_admin()
@@ -296,6 +299,49 @@ def _resolve_owned_meeting_record(meeting_id: int, user: dict) -> dict:
     return record
 
 
+def _hydrate_pipeline_value(type_hint, value):
+    origin = get_origin(type_hint)
+    if value is None:
+        return None
+    if origin is list:
+        item_type = get_args(type_hint)[0] if get_args(type_hint) else Any
+        return [_hydrate_pipeline_value(item_type, item) for item in value]
+    if origin is dict:
+        return value
+    if isinstance(type_hint, type) and is_dataclass(type_hint):
+        field_types = get_type_hints(type_hint)
+        kwargs = {}
+        for field in fields(type_hint):
+            kwargs[field.name] = _hydrate_pipeline_value(field_types.get(field.name, field.type), value.get(field.name))
+        return type_hint(**kwargs)
+    return value
+
+
+def _pipeline_result_from_payload(payload: dict[str, Any]) -> PipelineResult:
+    return _hydrate_pipeline_value(PipelineResult, payload)
+
+
+def _ensure_report_file(record: dict, file_name: str) -> Path:
+    stored_output_dir = str(record.get("output_dir") or "").strip()
+    output_dir = Path(stored_output_dir).resolve() if stored_output_dir else _resolve_output_dir(f"meeting-{record['id']}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    candidate = (output_dir / file_name).resolve()
+    if not str(candidate).startswith(str(output_dir)):
+        raise HTTPException(status_code=400, detail="Invalid report path.")
+    if candidate.exists():
+        return candidate
+
+    payload = json.loads(str(record.get("result_json") or "{}"))
+    if not payload:
+        raise HTTPException(status_code=404, detail="Stored analysis details are missing, so this report cannot be regenerated.")
+
+    regenerated_result = _pipeline_result_from_payload(payload)
+    write_result(regenerated_result, output_dir / "boardsight_result.json")
+    if not candidate.exists():
+        raise HTTPException(status_code=404, detail="Requested report file could not be regenerated.")
+    return candidate
+
+
 @app.get("/api/v1/me")
 def me(request: Request) -> dict:
     return _require_session_user(request)
@@ -327,14 +373,7 @@ def meeting_detail(meeting_id: int, request: Request) -> dict:
 def meeting_report(meeting_id: int, file_name: str, request: Request):
     user = _require_session_user(request)
     record = _resolve_owned_meeting_record(meeting_id, user)
-    output_dir = Path(str(record.get("output_dir") or "")).resolve()
-    if not output_dir.exists():
-        raise HTTPException(status_code=404, detail="Stored analysis output directory is missing.")
-    candidate = (output_dir / file_name).resolve()
-    if not str(candidate).startswith(str(output_dir)):
-        raise HTTPException(status_code=400, detail="Invalid report path.")
-    if not candidate.exists():
-        raise HTTPException(status_code=404, detail="Requested report file was not found.")
+    candidate = _ensure_report_file(record, file_name)
     return FileResponse(candidate, filename=candidate.name)
 
 
@@ -619,6 +658,138 @@ def _resolve_agent_connection(request_payload: dict[str, Any]) -> dict[str, Any]
         "private_token": str(request_payload.get("gitlab_private_token", "") or "").strip(),
     }
     return {key: value for key, value in flat_connection.items() if value}
+
+
+def _latest_source_context(user: dict[str, Any]) -> dict[str, Any]:
+    try:
+        meeting_rows = list_meeting_results(MEETING_DB_PATH, user_id=int(user["user_id"]))
+        if meeting_rows:
+            return _recorded_meeting_agent_context(meeting_rows[0])
+    except Exception:
+        pass
+    raise HTTPException(status_code=404, detail="No meeting context is available yet.")
+
+
+def _resolve_chat_source_context(request_payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
+    source_kind = str(request_payload.get("source_kind", "") or "").strip().lower()
+    source_id = str(request_payload.get("source_id", "") or "").strip()
+    if source_kind and source_id:
+        return _resolve_agent_source_context(source_kind, source_id, user)
+    return _latest_source_context(user)
+
+
+def _extract_chat_lists(context: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[str], list[str]]:
+    contract = context.get("agentic_contract", {}) or {}
+    entities = contract.get("entities", {}) if isinstance(contract, dict) else {}
+    decisions = list(entities.get("decisions", []) or [])
+    actions = list(entities.get("actions", []) or [])
+    risks = list(entities.get("risk_signals", []) or [])
+    summary = context.get("summary", {}) if isinstance(context.get("summary"), dict) else {}
+    discussion_points = [str(item).strip() for item in (summary.get("discussion_points", []) or []) if str(item).strip()]
+    outcomes_raw = summary.get("meeting_outcomes", []) or []
+    outcomes: list[str] = []
+    for item in outcomes_raw:
+        if isinstance(item, dict):
+            text = str(item.get("text") or item.get("summary") or "").strip()
+        else:
+            text = str(item or "").strip()
+        if text:
+            outcomes.append(text)
+    return decisions, actions, risks, discussion_points, outcomes
+
+
+def _format_bulleted_items(items: list[str], prefix: str = "- ") -> str:
+    if not items:
+        return ""
+    return "\n".join(f"{prefix}{item}" for item in items[:5])
+
+
+def _answer_from_structure(question: str, context: dict[str, Any]) -> str:
+    lowered = question.lower()
+    decisions, actions, risks, discussion_points, outcomes = _extract_chat_lists(context)
+    summary = context.get("summary", {}) if isinstance(context.get("summary"), dict) else {}
+    title = str(context.get("title") or "this meeting")
+
+    if any(keyword in lowered for keyword in ["decision", "decide", "agreed"]):
+        if not decisions:
+            return f"I did not find explicit structured decisions for {title} yet."
+        decision_lines = []
+        for item in decisions[:5]:
+            text = str(item.get("text") or item.get("title") or "Decision identified").strip()
+            owner = str(item.get("owner") or item.get("speaker") or "").strip()
+            meta = f" ({owner})" if owner else ""
+            decision_lines.append(f"{text}{meta}")
+        return "Here are the main decisions I found:\n" + _format_bulleted_items(decision_lines)
+
+    if any(keyword in lowered for keyword in ["action", "todo", "to-do", "task", "owner", "assignee"]):
+        if not actions:
+            return f"I did not find structured action items for {title} yet."
+        action_lines = []
+        for item in actions[:6]:
+            label = str(item.get("title") or item.get("text") or item.get("task") or "Follow-up item").strip()
+            owner = str(item.get("owner") or item.get("assignee") or item.get("speaker") or "Unassigned").strip()
+            due = str(item.get("deadline") or item.get("due_date") or "").strip()
+            suffix = f" | owner: {owner}" + (f" | due: {due}" if due else "")
+            action_lines.append(f"{label}{suffix}")
+        return "Here are the follow-up actions I found:\n" + _format_bulleted_items(action_lines)
+
+    if any(keyword in lowered for keyword in ["blocker", "risk", "problem", "issue"]):
+        if not risks:
+            return f"I did not find structured blockers or risk signals for {title}."
+        risk_lines = []
+        for item in risks[:6]:
+            label = str(item.get("description") or item.get("text") or "Risk identified").strip()
+            category = str(item.get("kind") or item.get("category") or "risk").strip()
+            owner = str(item.get("speaker") or item.get("owner") or "").strip()
+            meta = " | ".join(part for part in [category, owner] if part)
+            risk_lines.append(f"{label}" + (f" | {meta}" if meta else ""))
+        return "These are the main blockers and risks I found:\n" + _format_bulleted_items(risk_lines)
+
+    if any(keyword in lowered for keyword in ["outcome", "result", "summary", "about", "happened"]):
+        summary_text = str(summary.get("final_summary") or summary.get("rolling_summary") or summary.get("meeting_conclusion") or "").strip()
+        if outcomes:
+            return summary_text + ("\n\nOutcomes:\n" if summary_text else "Meeting outcomes:\n") + _format_bulleted_items(outcomes)
+        if discussion_points:
+            return summary_text + ("\n\nDiscussion points:\n" if summary_text else "Discussion points:\n") + _format_bulleted_items(discussion_points)
+        if summary_text:
+            return summary_text
+
+    return ""
+
+
+def _build_chat_prompt(question: str, context: dict[str, Any]) -> str:
+    decisions, actions, risks, discussion_points, outcomes = _extract_chat_lists(context)
+    summary = context.get("summary", {}) if isinstance(context.get("summary"), dict) else {}
+    summary_line = str(
+        summary.get("final_summary")
+        or summary.get("rolling_summary")
+        or summary.get("meeting_conclusion")
+        or "Summary unavailable."
+    ).strip()
+
+    def compact(items: list[str]) -> str:
+        return "; ".join(items[:4]) if items else "None"
+
+    decision_text = compact([str(item.get("text") or item.get("title") or "").strip() for item in decisions if str(item.get("text") or item.get("title") or "").strip()])
+    action_text = compact([str(item.get("title") or item.get("text") or item.get("task") or "").strip() for item in actions if str(item.get("title") or item.get("text") or item.get("task") or "").strip()])
+    risk_text = compact([str(item.get("description") or item.get("text") or "").strip() for item in risks if str(item.get("description") or item.get("text") or "").strip()])
+    discussion_text = compact(discussion_points)
+    outcome_text = compact(outcomes)
+
+    return (
+        "You are BoardSight Copilot. Answer the user's question using only the provided meeting context. "
+        "Be concise, practical, and specific. If context is missing, say so plainly and suggest the next useful question.\n\n"
+        f"Meeting title: {context.get('title')}\n"
+        f"Source kind: {context.get('source_kind')}\n"
+        f"Status: {context.get('status')}\n"
+        f"Summary: {summary_line}\n"
+        f"Discussion points: {discussion_text}\n"
+        f"Decisions: {decision_text}\n"
+        f"Action items: {action_text}\n"
+        f"Risks and blockers: {risk_text}\n"
+        f"Outcomes: {outcome_text}\n\n"
+        f"User question: {question}"
+    )
 
 
 def _run_pipeline_for_shared_path(
@@ -1170,6 +1341,45 @@ async def agent_execution_approve(request: Request, payload: dict | None = None)
         "status": updated.get("status") if updated else "unknown",
         "plan": plan,
         "sync_result": sync_result,
+    }
+
+
+@app.post("/api/v1/chat/query")
+async def chat_query(request: Request, payload: dict | None = None) -> dict:
+    user = _require_session_user(request)
+    request_payload = await _collect_request_payload(request, payload)
+    question = str(request_payload.get("question", "") or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="question is required.")
+
+    context = _resolve_chat_source_context(request_payload, user)
+    structured_answer = _answer_from_structure(question, context)
+    answer_source = "structured"
+    answer = structured_answer
+
+    if not answer:
+        prompt = _build_chat_prompt(question, context)
+        generated_text, generated_source = generate_text(prompt, default_config(), max_new_tokens=120, min_new_tokens=20)
+        if generated_text.strip():
+            answer = generated_text.strip()
+            answer_source = generated_source
+        else:
+            answer = (
+                f"I found context for {context.get('title')}, but I could not generate a richer answer from the local model. "
+                "Try asking about decisions, action items, blockers, or outcomes."
+            )
+            answer_source = "template-fallback"
+
+    return {
+        "answer": answer,
+        "answer_source": answer_source,
+        "source": {
+            "source_kind": context.get("source_kind"),
+            "source_id": context.get("source_id"),
+            "title": context.get("title"),
+            "status": context.get("status"),
+        },
+        "counts": context.get("counts", {}),
     }
 
 

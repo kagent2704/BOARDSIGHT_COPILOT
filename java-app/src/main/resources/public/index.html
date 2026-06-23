@@ -73,6 +73,7 @@
               <button class="nav-item" data-view="meetings">Meetings</button>
               <button class="nav-item" data-view="analyze">Upload & Analyze</button>
               <button class="nav-item" data-view="live">Live Meeting</button>
+              <button class="nav-item" data-view="chat">AI Copilot</button>
               <button class="nav-item" data-view="trace">Decision Trace</button>
               <button class="nav-item" data-view="workflow">Workflow Modelling</button>
             </div>
@@ -144,6 +145,7 @@
                 <div>
                   <h3 id="meetingTitle">Meeting Detail</h3>
                   <p id="meetingConclusion" class="muted"></p>
+                  <p class="muted export-retention-note">Download exports when you need them. Report files may disappear after a server restart, but the saved meeting analysis stays available and exports can be regenerated.</p>
                 </div>
                 <div class="button-row">
                   <button id="exportPdfBtn" class="ghost-btn">Export PDF</button>
@@ -374,6 +376,53 @@
                 </div>
                 <div id="gitlabStatusText" class="upload-status">No GitLab execution plan has been generated yet.</div>
                 <div id="gitlabPlanPreview"></div>
+              </div>
+            </article>
+          </section>
+
+          <section id="chatView" class="content-view hidden">
+            <article class="panel chat-layout">
+              <div class="panel-title-row">
+                <div>
+                  <h3>BoardSight Copilot</h3>
+                  <p class="muted">Ask follow-up questions about the current meeting, a live session, decisions, blockers, owners, or outcomes.</p>
+                </div>
+              </div>
+              <div class="chat-control-grid">
+                <div class="panel nested">
+                  <label>Chat Source
+                    <select id="chatSourceMode">
+                      <option value="auto" selected>Latest Available Context</option>
+                      <option value="meeting">Choose Specific Meeting</option>
+                      <option value="live">Current Live Session</option>
+                    </select>
+                  </label>
+                  <label id="chatMeetingPicker">Meeting to Analyze
+                    <select id="chatMeetingSelect">
+                      <option value="">Pick a processed meeting</option>
+                    </select>
+                  </label>
+                  <div id="chatSourceSummary" class="upload-status">Copilot will use the latest available meeting context.</div>
+                  <div class="chat-suggestions">
+                    <button type="button" class="ghost-btn chat-prompt-btn" data-prompt="What happened in this meeting?">What happened?</button>
+                    <button type="button" class="ghost-btn chat-prompt-btn" data-prompt="What are the action items and who owns them?">Action items</button>
+                    <button type="button" class="ghost-btn chat-prompt-btn" data-prompt="What blockers or risks were raised?">Blockers</button>
+                    <button type="button" class="ghost-btn chat-prompt-btn" data-prompt="What decisions were made?">Decisions</button>
+                  </div>
+                </div>
+                <div class="panel nested">
+                  <label>Your Question
+                    <textarea id="chatQuestionInput" rows="4" placeholder="Ask BoardSight Copilot about this meeting..."></textarea>
+                  </label>
+                  <div class="button-row">
+                    <button id="chatSendBtn" class="primary-btn">Ask Copilot</button>
+                    <button id="chatClearBtn" class="ghost-btn">Clear Chat</button>
+                  </div>
+                  <div id="chatStatusText" class="upload-status">Ask about decisions, action items, blockers, or meeting outcomes.</div>
+                </div>
+              </div>
+              <div id="chatHistory" class="panel nested chat-history">
+                <div class="empty-state">Copilot responses will appear here.</div>
               </div>
             </article>
           </section>

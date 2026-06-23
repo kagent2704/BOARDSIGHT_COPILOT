@@ -1,15 +1,32 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from pathlib import Path
 from typing import Any
 
+from boardsight_ai.database import execute, insert_and_return_id, is_postgres
+
 
 def init_gitlab_storage(database_path: Path) -> None:
-    database_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(database_path) as connection:
-        connection.execute(
+    if is_postgres(database_path):
+        execute(
+            database_path,
+            """
+            CREATE TABLE IF NOT EXISTS gitlab_syncs (
+                id BIGSERIAL PRIMARY KEY,
+                source_kind TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                project_ref TEXT,
+                dry_run INTEGER NOT NULL DEFAULT 1,
+                plan_json TEXT NOT NULL,
+                sync_json TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+        )
+    else:
+        execute(
+            database_path,
             """
             CREATE TABLE IF NOT EXISTS gitlab_syncs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -21,9 +38,8 @@ def init_gitlab_storage(database_path: Path) -> None:
                 sync_json TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
-            """
+            """,
         )
-        connection.commit()
 
 
 def save_gitlab_sync(
@@ -37,21 +53,21 @@ def save_gitlab_sync(
     sync_result: dict[str, Any] | None,
 ) -> int:
     init_gitlab_storage(database_path)
-    with sqlite3.connect(database_path) as connection:
-        cursor = connection.execute(
-            """
-            INSERT INTO gitlab_syncs (
-                source_kind, source_id, project_ref, dry_run, plan_json, sync_json
-            ) VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                source_kind,
-                source_id,
-                project_ref,
-                1 if dry_run else 0,
-                json.dumps(plan),
-                json.dumps(sync_result) if sync_result is not None else None,
-            ),
+    return insert_and_return_id(
+        database_path,
+        """
+        INSERT INTO gitlab_syncs (
+            source_kind, source_id, project_ref, dry_run, plan_json, sync_json
+        ) VALUES (
+            :source_kind, :source_id, :project_ref, :dry_run, :plan_json, :sync_json
         )
-        connection.commit()
-        return int(cursor.lastrowid)
+        """,
+        {
+            "source_kind": source_kind,
+            "source_id": source_id,
+            "project_ref": project_ref,
+            "dry_run": 1 if dry_run else 0,
+            "plan_json": json.dumps(plan),
+            "sync_json": json.dumps(sync_result) if sync_result is not None else None,
+        },
+    )

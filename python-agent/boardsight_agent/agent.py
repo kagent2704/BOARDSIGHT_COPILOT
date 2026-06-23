@@ -18,7 +18,7 @@ def _backend_url() -> str:
 
 def _default_headers() -> dict[str, str]:
     headers = {"accept": "application/json"}
-    api_key = os.getenv("BOARDSIGHT_AGENT_BACKEND_API_KEY", "").strip()
+    api_key = os.getenv("BOARDSIGHT_AGENT_BACKEND_API_KEY", "").strip() or os.getenv("BOARDSIGHT_AGENT_API_KEY", "").strip()
     if api_key:
         headers["X-BoardSight-Agent-Key"] = api_key
     bearer = os.getenv("BOARDSIGHT_AGENT_BACKEND_BEARER", "").strip()

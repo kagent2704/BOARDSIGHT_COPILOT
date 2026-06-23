@@ -1,5 +1,6 @@
 # Build outputs
 output/
+output/local-smoke/
 java-app/build/
 java-app/build-*/
 java-app/*.jar
@@ -8,10 +9,12 @@ java-app/java_sources.txt
 # Python caches and environments
 python-ai/.venv/
 python-ai/.env
+python-ai.env
 python-ai/__pycache__/
 python-ai/boardsight_ai/__pycache__/
 python-ai/boardsight_ai/features/__pycache__/
 python-ai/boardsight_ai/providers/__pycache__/
+python-agent/boardsight_agent/.adk/
 *.pyc
 
 # IDE and local metadata

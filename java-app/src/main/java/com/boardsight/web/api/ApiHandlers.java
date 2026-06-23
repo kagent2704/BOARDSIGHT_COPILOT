@@ -21,7 +21,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class ApiHandlers {
     private ApiHandlers() {
@@ -39,6 +42,7 @@ public final class ApiHandlers {
         server.createContext("/api/analyze", new AnalyzeHandler(projectRoot, repository));
         server.createContext("/api/live", new LiveProxyHandler(projectRoot));
         server.createContext("/api/gitlab", new GitLabProxyHandler());
+        server.createContext("/api/chat", new ChatProxyHandler());
         server.createContext("/", new StaticHandler());
     }
 
@@ -60,13 +64,15 @@ public final class ApiHandlers {
 
             byte[] requestBody = exchange.getRequestBody().readAllBytes();
             String query = exchange.getRequestURI().getRawQuery();
-            String targetUrl = aiServiceUrl + targetPath + (query == null || query.isBlank() ? "" : "?" + query);
+            Map<String, String> bodyFields = parseSimpleJsonBody(requestBody);
+            String targetUrl = appendQueryFields(aiServiceUrl + targetPath, query, bodyFields);
+            byte[] forwardedBody = bodyFields.isEmpty() ? requestBody : new byte[0];
             HttpResponse<byte[]> response;
             try {
                 response = sendHttpRequest(
                     targetUrl,
                     "POST",
-                    requestBody,
+                    forwardedBody,
                     exchange.getRequestHeaders().getFirst("Authorization"),
                     "application/json"
                 );
@@ -331,19 +337,55 @@ public final class ApiHandlers {
             }
 
             String query = exchange.getRequestURI().getRawQuery();
-            String targetUrl = aiServiceUrl + targetPath + (query == null || query.isBlank() ? "" : "?" + query);
+            byte[] requestBody = exchange.getRequestBody().readAllBytes();
+            Map<String, String> bodyFields = parseSimpleJsonBody(requestBody);
+            String targetUrl = appendQueryFields(aiServiceUrl + targetPath, query, bodyFields);
+            byte[] forwardedBody = bodyFields.isEmpty() ? requestBody : new byte[0];
             HttpResponse<byte[]> response;
             try {
                 response = sendHttpRequest(
                     targetUrl,
                     "POST",
-                    exchange.getRequestBody().readAllBytes(),
+                    forwardedBody,
                     exchange.getRequestHeaders().getFirst("Authorization"),
                     "application/json"
                 );
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
                 throw new IOException("GitLab request was interrupted.", exception);
+            }
+
+            String responseContentType = response.headers().firstValue("Content-Type").orElse("application/json; charset=utf-8");
+            HttpUtils.sendBytes(exchange, response.statusCode(), response.body(), responseContentType);
+        }
+    }
+
+    private static final class ChatProxyHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            HttpUtils.requireMethod(exchange, "POST");
+            String aiServiceUrl = aiServiceUrl();
+            if (aiServiceUrl == null) {
+                HttpUtils.sendJson(exchange, 503, "{\"error\":\"Chat backend is unavailable.\"}");
+                return;
+            }
+
+            HttpResponse<byte[]> response;
+            byte[] requestBody = exchange.getRequestBody().readAllBytes();
+            Map<String, String> bodyFields = parseSimpleJsonBody(requestBody);
+            String targetUrl = appendQueryFields(aiServiceUrl + "/api/v1/chat/query", exchange.getRequestURI().getRawQuery(), bodyFields);
+            byte[] forwardedBody = bodyFields.isEmpty() ? requestBody : new byte[0];
+            try {
+                response = sendHttpRequest(
+                    targetUrl,
+                    "POST",
+                    forwardedBody,
+                    exchange.getRequestHeaders().getFirst("Authorization"),
+                    "application/json"
+                );
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new IOException("Chat request was interrupted.", exception);
             }
 
             String responseContentType = response.headers().firstValue("Content-Type").orElse("application/json; charset=utf-8");
@@ -478,5 +520,40 @@ public final class ApiHandlers {
         query.append(URLEncoder.encode(key, StandardCharsets.UTF_8))
             .append("=")
             .append(URLEncoder.encode(value, StandardCharsets.UTF_8));
+    }
+
+    private static String appendQueryFields(String baseUrl, String existingQuery, Map<String, String> bodyFields) {
+        StringBuilder query = new StringBuilder();
+        if (existingQuery != null && !existingQuery.isBlank()) {
+            query.append(existingQuery);
+        }
+        for (Map.Entry<String, String> entry : bodyFields.entrySet()) {
+            if (query.length() > 0) {
+                query.append("&");
+            }
+            query.append(URLEncoder.encode(entry.getKey(), StandardCharsets.UTF_8))
+                .append("=")
+                .append(URLEncoder.encode(entry.getValue(), StandardCharsets.UTF_8));
+        }
+        return baseUrl + (query.length() == 0 ? "" : "?" + query);
+    }
+
+    private static Map<String, String> parseSimpleJsonBody(byte[] requestBody) {
+        Map<String, String> values = new LinkedHashMap<>();
+        if (requestBody == null || requestBody.length == 0) {
+            return values;
+        }
+        String body = new String(requestBody, StandardCharsets.UTF_8).trim();
+        if (!body.startsWith("{") || !body.endsWith("}")) {
+            return values;
+        }
+        Matcher matcher = Pattern.compile("\"([^\"]+)\"\\s*:\\s*(\"([^\"]*)\"|true|false|-?\\d+(?:\\.\\d+)?)").matcher(body);
+        while (matcher.find()) {
+            String key = matcher.group(1);
+            String rawValue = matcher.group(2);
+            String stringValue = matcher.group(3);
+            values.put(key, stringValue != null ? stringValue : rawValue);
+        }
+        return values;
     }
 }

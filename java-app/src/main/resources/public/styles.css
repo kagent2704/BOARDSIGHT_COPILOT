@@ -282,6 +282,67 @@ button:hover { transform: translateY(-1px); }
 .live-card-item small {
   color: var(--muted);
 }
+.chat-layout,
+.chat-control-grid {
+  display: grid;
+  gap: var(--grid-gap);
+}
+.chat-control-grid { grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); }
+.chat-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+.chat-suggestions .ghost-btn { padding: 10px 14px; }
+.export-retention-note {
+  max-width: 760px;
+  margin-top: 10px;
+}
+.chat-history {
+  min-height: 320px;
+  max-height: 540px;
+  overflow-y: auto;
+  align-content: start;
+}
+.chat-message {
+  display: grid;
+  gap: 8px;
+  max-width: 88%;
+  padding: 16px 18px;
+  border-radius: 18px;
+}
+.chat-message.is-user {
+  justify-self: end;
+  background: linear-gradient(135deg, rgba(69,104,255,0.14), rgba(69,104,255,0.2));
+  border: 1px solid rgba(69,104,255,0.16);
+}
+.chat-message.is-assistant {
+  justify-self: start;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+}
+.chat-message-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.chat-message-body {
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+textarea#chatQuestionInput {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 13px 14px;
+  background: var(--surface-soft);
+  color: var(--text);
+  min-height: 120px;
+  resize: vertical;
+}
 .workflow-nodes { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; justify-content: center; }
 .workflow-node { padding: 10px 16px; border-radius: 14px; background: var(--surface-strong); border: 1px solid var(--border); }
 .empty-state {
@@ -599,6 +660,7 @@ button:hover { transform: translateY(-1px); }
   .app-shell { grid-template-columns: 1fr; }
   .kpi-grid { grid-template-columns: repeat(2, 1fr); }
   .dashboard-main, .dashboard-bottom, .meeting-grid, .trace-grid, .workflow-grid, .settings-grid, .live-control-grid, .live-grid { grid-template-columns: 1fr; }
+  .chat-control-grid { grid-template-columns: 1fr; }
   .layout-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 920px) {
@@ -609,6 +671,7 @@ button:hover { transform: translateY(-1px); }
   .topbar-actions { justify-content: space-between; flex-wrap: wrap; }
   .kpi-grid { grid-template-columns: 1fr; }
   .transcript-row { grid-template-columns: 1fr; }
+  .chat-message { max-width: 100%; }
   .cv-frame-head,
   .cv-lane-head,
   .cv-timeline-meta { flex-direction: column; align-items: flex-start; }

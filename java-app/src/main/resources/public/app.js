@@ -7,6 +7,7 @@ const DEFAULT_USER = {
 const state = {
   meetings: [],
   currentMeetingId: null,
+  chatMeetingId: null,
   currentMeeting: null,
   liveSession: null,
   sessionHasProcessed: false,
@@ -87,6 +88,15 @@ const gitlabProjectIdInput = document.getElementById("gitlabProjectIdInput");
 const gitlabTokenInput = document.getElementById("gitlabTokenInput");
 const gitlabStatusText = document.getElementById("gitlabStatusText");
 const gitlabPlanPreview = document.getElementById("gitlabPlanPreview");
+const chatSourceMode = document.getElementById("chatSourceMode");
+const chatMeetingPicker = document.getElementById("chatMeetingPicker");
+const chatMeetingSelect = document.getElementById("chatMeetingSelect");
+const chatSourceSummary = document.getElementById("chatSourceSummary");
+const chatQuestionInput = document.getElementById("chatQuestionInput");
+const chatSendBtn = document.getElementById("chatSendBtn");
+const chatClearBtn = document.getElementById("chatClearBtn");
+const chatStatusText = document.getElementById("chatStatusText");
+const chatHistory = document.getElementById("chatHistory");
 
 let liveCaptureStream = null;
 let liveSourceStreams = [];
@@ -96,6 +106,7 @@ let liveClock = null;
 let liveStartedAtMs = 0;
 let liveChunkStartSeconds = 0;
 let liveFinalizeRequested = false;
+state.chatMessages = [];
 
 themeToggle.addEventListener("click", () => {
   state.theme = state.theme === "light" ? "dark" : "light";
@@ -156,6 +167,32 @@ startLiveBtn?.addEventListener("click", startLiveSession);
 stopLiveBtn?.addEventListener("click", () => stopLiveSession(false));
 previewGitlabBtn?.addEventListener("click", () => runGitlabPlan(true));
 syncGitlabBtn?.addEventListener("click", () => runGitlabPlan(false));
+chatSendBtn?.addEventListener("click", () => submitCopilotQuestion());
+chatClearBtn?.addEventListener("click", clearCopilotChat);
+chatSourceMode?.addEventListener("change", () => {
+  renderChatMeetingPicker();
+  renderChatSourceSummary();
+});
+chatMeetingSelect?.addEventListener("change", () => {
+  state.chatMeetingId = chatMeetingSelect.value || null;
+  if (state.chatMeetingId && chatSourceMode) {
+    chatSourceMode.value = "meeting";
+  }
+  renderChatSourceSummary();
+});
+chatQuestionInput?.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+    submitCopilotQuestion();
+  }
+});
+document.querySelectorAll(".chat-prompt-btn").forEach((button) => {
+  button.addEventListener("click", () => {
+    if (chatQuestionInput) {
+      chatQuestionInput.value = button.dataset.prompt || "";
+      submitCopilotQuestion();
+    }
+  });
+});
 
 document.querySelectorAll(".nav-item").forEach((button) => {
   button.addEventListener("click", () => setView(button.dataset.view));
@@ -181,6 +218,9 @@ syncAuthMode();
 updateUserChip();
 bootstrapSession();
 renderLiveSession();
+renderChatSourceSummary();
+renderChatMeetingPicker();
+renderCopilotChat();
 
 async function bootstrapSession() {
   if (!state.authToken) {
@@ -323,6 +363,7 @@ function clearSession() {
   state.authToken = "";
   state.currentMeeting = null;
   state.currentMeetingId = null;
+  state.chatMeetingId = null;
   state.meetings = [];
   state.liveSession = null;
   state.sessionHasProcessed = false;
@@ -337,6 +378,8 @@ function clearSession() {
   renderWorkflow();
   teardownLiveCapture();
   renderLiveSession();
+  renderChatMeetingPicker();
+  renderChatSourceSummary();
   loginView.classList.remove("hidden");
   appView.classList.add("hidden");
 }
@@ -366,9 +409,12 @@ async function loadMeetings() {
     const response = await apiFetch("/api/meetings");
     const payload = await response.json();
     state.meetings = payload.items || [];
+    syncChatMeetingSelection();
     state.sessionHasProcessed = state.meetings.length > 0;
     updateDashboard();
     renderMeetingList();
+    renderChatMeetingPicker();
+    renderChatSourceSummary();
     if (state.currentMeetingId) {
       await loadMeetingDetail(state.currentMeetingId);
     } else {
@@ -394,12 +440,14 @@ async function loadMeetingDetail(meetingId) {
   const response = await apiFetch(`/api/meeting?id=${encodeURIComponent(resolvedMeetingId)}`);
   state.currentMeeting = await response.json();
   state.currentMeetingId = resolvedMeetingId;
+  syncChatMeetingSelection(true);
   state.sessionHasProcessed = true;
   updateDashboard();
   renderMeetingDetail();
   renderCvFeaturePanel();
   renderTrace();
   renderWorkflow();
+  renderChatSourceSummary();
 }
 
 function updateDashboard() {
@@ -957,6 +1005,10 @@ function setView(viewName) {
   document.querySelectorAll(".nav-item").forEach((button) => button.classList.toggle("active", button.dataset.view === viewName));
   document.querySelectorAll(".content-view").forEach((view) => view.classList.add("hidden"));
   document.getElementById(`${viewName}View`).classList.remove("hidden");
+  if (viewName === "chat") {
+    renderChatSourceSummary();
+    renderCopilotChat();
+  }
 }
 
 function openReport(fileName) {
@@ -980,6 +1032,63 @@ function formatTime(seconds) {
 
 function prettifyMeetingId(id) {
   return String(id).replace(/[-_]/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function getChatMeetingLabel(meeting) {
+  if (!meeting) return "";
+  const title = String(meeting.title || `Meeting ${meeting.id || meeting.meetingId || ""}`).trim();
+  const dateValue = meeting.createdAt || meeting.created_at;
+  const formattedDate = dateValue ? formatDate(dateValue) : "";
+  return formattedDate ? `${title} - ${formattedDate}` : title;
+}
+
+function syncChatMeetingSelection(preferCurrent = false) {
+  const meetingIds = new Set(state.meetings.map((item) => String(item.id || item.meetingId || "")).filter(Boolean));
+  const currentMeetingId = state.currentMeetingId ? String(state.currentMeetingId) : "";
+  if (state.chatMeetingId && meetingIds.has(String(state.chatMeetingId))) {
+    return;
+  }
+  if (preferCurrent && currentMeetingId && meetingIds.has(currentMeetingId)) {
+    state.chatMeetingId = currentMeetingId;
+    return;
+  }
+  if (!state.chatMeetingId && currentMeetingId && meetingIds.has(currentMeetingId)) {
+    state.chatMeetingId = currentMeetingId;
+    return;
+  }
+  state.chatMeetingId = state.meetings[0] ? String(state.meetings[0].id || state.meetings[0].meetingId || "") : null;
+}
+
+function renderChatMeetingPicker() {
+  if (!chatMeetingPicker || !chatMeetingSelect) return;
+  syncChatMeetingSelection();
+  chatMeetingSelect.innerHTML = "";
+
+  if (!state.meetings.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No processed meetings available";
+    chatMeetingSelect.appendChild(option);
+    chatMeetingSelect.disabled = true;
+    return;
+  }
+
+  chatMeetingSelect.disabled = false;
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "Pick a processed meeting";
+  placeholder.selected = !state.chatMeetingId;
+  chatMeetingSelect.appendChild(placeholder);
+  state.meetings.forEach((meeting) => {
+    const option = document.createElement("option");
+    const meetingId = String(meeting.id || meeting.meetingId || "");
+    option.value = meetingId;
+    option.textContent = getChatMeetingLabel(meeting);
+    if (meetingId === String(state.chatMeetingId || "")) {
+      option.selected = true;
+    }
+    chatMeetingSelect.appendChild(option);
+  });
 }
 
 function initialsFor(name) {
@@ -1632,6 +1741,7 @@ function renderLiveSession() {
     livePresentationInsights.innerHTML = `<div class="empty-state">Presentation context will appear when slide or screen windows are detected.</div>`;
     liveTranscript.innerHTML = `<div class="empty-state">Transcript chunks will appear here during the meeting.</div>`;
     gitlabPlanPreview.innerHTML = `<div class="empty-state">Preview the GitLab execution plan after the meeting starts.</div>`;
+    renderChatSourceSummary();
     return;
   }
 
@@ -1713,6 +1823,7 @@ function renderLiveSession() {
   } else {
     gitlabPlanPreview.innerHTML = renderGitlabPlan(state.liveSession.gitlabPlan, state.liveSession.gitlabSyncResult);
   }
+  renderChatSourceSummary();
 }
 
 async function runGitlabPlan(dryRun) {
@@ -1818,6 +1929,134 @@ function renderLiveTranscript(segments) {
       <div>${escapeHtml(segment.text || "")}</div>
     </div>
   `).join("");
+}
+
+function resolveChatSourcePayload() {
+  const mode = chatSourceMode?.value || "auto";
+  if (mode === "meeting") {
+    const selectedMeetingId = String(state.chatMeetingId || state.currentMeetingId || "").trim();
+    if (!selectedMeetingId) {
+      throw new Error("Select a meeting first, or switch Chat Source to Latest Available Context.");
+    }
+    return {
+      source_kind: "meeting",
+      source_id: selectedMeetingId
+    };
+  }
+  if (mode === "live") {
+    if (!state.liveSession?.session_id) {
+      throw new Error("Start or finalize a live session first, or switch Chat Source to Latest Available Context.");
+    }
+    return {
+      source_kind: "live",
+      source_id: String(state.liveSession.session_id)
+    };
+  }
+  return {};
+}
+
+function renderChatSourceSummary() {
+  if (!chatSourceSummary) return;
+  const mode = chatSourceMode?.value || "auto";
+  if (mode === "meeting") {
+    const selectedMeetingId = String(state.chatMeetingId || state.currentMeetingId || "").trim();
+    const selectedMeeting = state.meetings.find((item) => String(item.id || item.meetingId || "") === selectedMeetingId);
+    chatSourceSummary.textContent = selectedMeetingId
+      ? `Copilot will use this meeting: ${getChatMeetingLabel(selectedMeeting) || prettifyMeetingId(selectedMeetingId)}`
+      : "Choose a processed meeting from the dropdown above, or switch to Latest Available Context.";
+    return;
+  }
+  if (mode === "live") {
+    chatSourceSummary.textContent = state.liveSession?.session_id
+      ? `Copilot will use the current live session: ${state.liveSession.title || state.liveSession.session_id}`
+      : "No live session is available yet. Start a live meeting first or use Latest Available Context.";
+    return;
+  }
+  chatSourceSummary.textContent = state.meetings.length
+    ? "Copilot will use the latest available meeting context. You can also pick any processed meeting from the meeting dropdown."
+    : "Copilot will use the latest available meeting context.";
+}
+
+function renderCopilotChat() {
+  if (!chatHistory) return;
+  if (!state.chatMessages.length) {
+    chatHistory.innerHTML = `<div class="empty-state">Copilot responses will appear here.</div>`;
+    return;
+  }
+  chatHistory.innerHTML = state.chatMessages.map((message) => `
+    <article class="chat-message ${message.role === "user" ? "is-user" : "is-assistant"}">
+      <div class="chat-message-meta">
+        <strong>${message.role === "user" ? "You" : "BoardSight Copilot"}</strong>
+        ${message.meta ? `<span>${escapeHtml(message.meta)}</span>` : ""}
+      </div>
+      <div class="chat-message-body">${escapeHtml(message.text || "").replace(/\n/g, "<br>")}</div>
+    </article>
+  `).join("");
+  chatHistory.scrollTop = chatHistory.scrollHeight;
+}
+
+function clearCopilotChat() {
+  state.chatMessages = [];
+  if (chatQuestionInput) {
+    chatQuestionInput.value = "";
+  }
+  chatStatusText.textContent = "Ask about decisions, action items, blockers, or meeting outcomes.";
+  renderCopilotChat();
+}
+
+async function submitCopilotQuestion() {
+  const question = String(chatQuestionInput?.value || "").trim();
+  if (!question) {
+    chatStatusText.textContent = "Type a question for BoardSight Copilot first.";
+    return;
+  }
+
+  let sourcePayload = {};
+  try {
+    sourcePayload = resolveChatSourcePayload();
+  } catch (error) {
+    chatStatusText.textContent = error.message || "Copilot could not resolve a meeting source.";
+    return;
+  }
+
+  state.chatMessages.push({ role: "user", text: question, meta: chatSourceMode?.selectedOptions?.[0]?.textContent || "Context" });
+  renderCopilotChat();
+  chatStatusText.textContent = "BoardSight Copilot is thinking...";
+  if (chatQuestionInput) {
+    chatQuestionInput.value = "";
+  }
+
+  try {
+    const response = await apiFetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        question,
+        ...sourcePayload
+      })
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      chatStatusText.textContent = payload.detail || payload.error || "Copilot could not answer that question.";
+      return;
+    }
+    const sourceMeta = payload.source?.title
+      ? `${payload.source.title} | ${payload.answer_source || "response"}`
+      : (payload.answer_source || "response");
+    state.chatMessages.push({
+      role: "assistant",
+      text: payload.answer || "No answer returned.",
+      meta: sourceMeta
+    });
+    chatStatusText.textContent = "Copilot response ready.";
+    renderCopilotChat();
+  } catch (error) {
+    if (error?.status === 401) {
+      chatStatusText.textContent = "Session expired. Sign in again to use Copilot.";
+      return;
+    }
+    chatStatusText.textContent = error?.message || "Copilot request failed.";
+  }
 }
 
 async function apiFetch(url, options = {}) {

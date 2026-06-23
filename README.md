@@ -6,6 +6,8 @@ The agentic upgrade path is documented in [AGENTIC_ARCHITECTURE.md](/C:/Users/ka
 
 The concrete cloud rollout plan now lives in [docs/GOOGLE_CLOUD_AGENT_IMPLEMENTATION_PLAN.md](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT_CV_AGENTIC/docs/GOOGLE_CLOUD_AGENT_IMPLEMENTATION_PLAN.md), and the first Agent Builder-facing tool contract is documented in [docs/AGENT_BUILDER_TOOLKIT.md](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT_CV_AGENTIC/docs/AGENT_BUILDER_TOOLKIT.md).
 
+For independent public hosting, use [DEPLOY_RENDER_NEON.md](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT_CV_AGENTIC/docs/DEPLOY_RENDER_NEON.md). A Render Blueprint file is included at [render.yaml](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT_CV_AGENTIC/render.yaml).
+
 The current codebase follows a deep-learning-only detection policy. If a required model is unavailable, the pipeline reports that feature as unavailable instead of falling back to heuristics.
 
 See [PROJECT_ALIGNMENT.md](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT/docs/PROJECT_ALIGNMENT.md) for the design direction that supersedes older papers and SRS language.
@@ -50,12 +52,12 @@ If you want the architecture rationale and the doc/SRS contradictions spelled ou
 - Enough disk space for local model caches
 - Hugging Face token in `python-ai/.env` if you want gated model access such as pyannote diarization
 
-Core Python dependencies live in [requirements-core.txt](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT/python-ai/requirements-core.txt). Heavier ML dependencies live in [requirements-ml.txt](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT/python-ai/requirements-ml.txt).
+Core Python dependencies live in [requirements-core.txt](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT_CV_AGENTIC/python-ai/requirements-core.txt). Heavier ML dependencies live in [requirements-ml.txt](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT_CV_AGENTIC/python-ai/requirements-ml.txt).
 
 ## Install Python Dependencies
 
 ```powershell
-cd "C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT"
+cd "C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT_CV_AGENTIC"
 python -m pip install -r .\python-ai\requirements-core.txt
 python -m pip install -r .\python-ai\requirements-ml.txt
 ```
@@ -69,16 +71,18 @@ Open two terminals.
 Terminal 1, AI service in PowerShell:
 
 ```powershell
-cd "C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT"
-$env:PYTHONPATH="python-ai"
+cd "C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT_CV_AGENTIC\python-ai"
+$env:PYTHONPATH="C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT_CV_AGENTIC\python-ai"
+$env:BOARDSIGHT_AGENT_API_KEY="boardsight-local-dev-key"
 python -m boardsight_ai.service --host 127.0.0.1 --port 8000
 ```
 
 Terminal 1, AI service in Command Prompt:
 
 ```cmd
-cd "C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT"
-set PYTHONPATH=python-ai
+cd "C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT_CV_AGENTIC\python-ai"
+set PYTHONPATH=C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT_CV_AGENTIC\python-ai
+set BOARDSIGHT_AGENT_API_KEY=boardsight-local-dev-key
 python -m boardsight_ai.service --host 127.0.0.1 --port 8000
 ```
 
@@ -91,10 +95,10 @@ You can also use the script:
 Terminal 2, web UI:
 
 ```powershell
-cd "C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT"
+cd "C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT_CV_AGENTIC"
 $env:BOARDSIGHT_AI_URL="http://127.0.0.1:8000"
 .\scripts\build-java.ps1
-java -jar .\java-app\build\boardsight.jar --port 8080
+.\scripts\run-web.ps1 -port 8080
 ```
 
 Open:
@@ -106,7 +110,7 @@ Open:
 ### Option 2: Docker Compose
 
 ```powershell
-cd "C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT"
+cd "C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT_CV_AGENTIC"
 docker compose up --build
 ```
 
@@ -118,7 +122,7 @@ This starts:
 ### Option 3: CLI Only
 
 ```powershell
-cd "C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT"
+cd "C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT_CV_AGENTIC"
 python .\python-ai\boardsight_ai\cli.py --video ".\output\short_sample.mp4" --output-dir ".\output\manual-run"
 ```
 
@@ -140,6 +144,7 @@ The FastAPI service seeds a default admin account on startup:
 7. Review outputs in:
    - `Home`
    - `Meetings`
+   - `AI Copilot`
    - `Decision Trace`
    - `Workflow Modelling`
 8. Export reports from the meeting detail view.

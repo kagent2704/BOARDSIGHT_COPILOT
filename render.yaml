@@ -1,0 +1,61 @@
+services:
+  - type: web
+    runtime: docker
+    name: boardsight-ai
+    plan: free
+    rootDir: python-ai
+    dockerfilePath: ./python-ai/Dockerfile
+    dockerContext: ./python-ai
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "8000"
+      - key: PYTHONIOENCODING
+        value: UTF-8
+      - key: MPLBACKEND
+        value: Agg
+      - key: HF_HUB_DISABLE_SYMLINKS_WARNING
+        value: "1"
+      - key: BOARDSIGHT_WARM_MODELS
+        value: "0"
+      - key: BOARDSIGHT_LLM_PROVIDER
+        value: extractive
+      - key: BOARDSIGHT_DEEPFACE_DETECTOR
+        value: opencv
+      - key: BOARDSIGHT_VIDEO_SAMPLE_SECONDS
+        value: "20"
+      - key: BOARDSIGHT_VISUAL_SAMPLE_SECONDS
+        value: "45"
+      - key: BOARDSIGHT_MAX_VISUAL_SAMPLES
+        value: "2"
+      - key: BOARDSIGHT_MAX_ATTENTION_SAMPLES
+        value: "1"
+      - key: BOARDSIGHT_MAX_FACE_SAMPLES
+        value: "1"
+      - key: BOARDSIGHT_MAX_WORKFLOW_SEGMENTS
+        value: "12"
+      - key: BOARDSIGHT_ENABLE_DIARIZATION
+        value: "false"
+      - key: BOARDSIGHT_DATABASE_URL
+        sync: false
+      - key: BOARDSIGHT_AGENT_API_KEY
+        generateValue: true
+      - key: BOARDSIGHT_GITLAB_BASE_URL
+        sync: false
+      - key: BOARDSIGHT_GITLAB_PROJECT_ID
+        sync: false
+      - key: BOARDSIGHT_GITLAB_PRIVATE_TOKEN
+        sync: false
+
+  - type: web
+    runtime: docker
+    name: boardsight-web
+    plan: free
+    rootDir: java-app
+    dockerfilePath: ./java-app/Dockerfile
+    dockerContext: ./java-app
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: BOARDSIGHT_AI_URL
+        sync: false

@@ -22,4 +22,4 @@ COPY --from=build /build/build/boardsight.jar /opt/boardsight/boardsight.jar
 
 EXPOSE 8080
 
-CMD ["java", "-jar", "/opt/boardsight/boardsight.jar", "--port", "8080"]
+CMD ["sh", "-c", "java -jar /opt/boardsight/boardsight.jar --port ${PORT:-8080}"]
