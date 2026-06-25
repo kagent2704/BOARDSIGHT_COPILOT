@@ -760,8 +760,31 @@ def _answer_from_structure(question: str, context: dict[str, Any]) -> str:
             risk_lines.append(f"{label}" + (f" | {meta}" if meta else ""))
         return "These are the main blockers and risks I found:\n" + _format_bulleted_items(risk_lines)
 
-    if any(keyword in lowered for keyword in ["outcome", "result", "summary", "about", "happened"]):
+    if any(
+        keyword in lowered
+        for keyword in [
+            "outcome",
+            "result",
+            "summary",
+            "summarize",
+            "summarise",
+            "about",
+            "happened",
+            "goal",
+            "purpose",
+            "objective",
+            "agenda",
+        ]
+    ):
         summary_text = str(summary.get("final_summary") or summary.get("rolling_summary") or summary.get("meeting_conclusion") or "").strip()
+        if any(keyword in lowered for keyword in ["goal", "purpose", "objective", "agenda"]):
+            if discussion_points:
+                return (
+                    f"Based on the transcript, {title} appears to focus on:\n"
+                    + _format_bulleted_items(discussion_points[:5])
+                )
+            if summary_text:
+                return summary_text
         if outcomes:
             return summary_text + ("\n\nOutcomes:\n" if summary_text else "Meeting outcomes:\n") + _format_bulleted_items(outcomes)
         if discussion_points:
@@ -770,6 +793,53 @@ def _answer_from_structure(question: str, context: dict[str, Any]) -> str:
             return summary_text
 
     return ""
+
+
+def _grounded_chat_fallback(question: str, context: dict[str, Any]) -> str:
+    decisions, actions, risks, discussion_points, outcomes = _extract_chat_lists(context)
+    summary = context.get("summary", {}) if isinstance(context.get("summary"), dict) else {}
+    title = str(context.get("title") or "this meeting")
+    summary_text = str(
+        summary.get("final_summary")
+        or summary.get("rolling_summary")
+        or summary.get("meeting_conclusion")
+        or ""
+    ).strip()
+    lowered = question.lower()
+
+    if any(keyword in lowered for keyword in ["goal", "purpose", "objective", "agenda"]):
+        if discussion_points:
+            return (
+                f"I am staying grounded to the stored transcript for {title}. "
+                "The meeting appears to focus on:\n"
+                + _format_bulleted_items(discussion_points[:5])
+            )
+        if summary_text:
+            return summary_text
+
+    lines: list[str] = []
+    if summary_text:
+        lines.append(summary_text)
+    if discussion_points:
+        lines.append("Discussion points:\n" + _format_bulleted_items(discussion_points[:5]))
+    if decisions:
+        decision_lines = [str(item.get("text") or item.get("title") or "Decision identified").strip() for item in decisions[:3]]
+        lines.append("Decisions:\n" + _format_bulleted_items(decision_lines))
+    if actions:
+        action_lines = [str(item.get("title") or item.get("text") or item.get("task") or "Follow-up item").strip() for item in actions[:3]]
+        lines.append("Action items:\n" + _format_bulleted_items(action_lines))
+    if risks:
+        risk_lines = [str(item.get("description") or item.get("text") or "Risk identified").strip() for item in risks[:3]]
+        lines.append("Risks:\n" + _format_bulleted_items(risk_lines))
+    if outcomes:
+        lines.append("Outcomes:\n" + _format_bulleted_items(outcomes[:3]))
+
+    if lines:
+        return "\n\n".join(lines)
+    return (
+        f"I do not have enough grounded meeting detail to answer that confidently for {title}. "
+        "Try asking about the summary, decisions, action items, or discussion points."
+    )
 
 
 def _build_chat_prompt(question: str, context: dict[str, Any]) -> str:
@@ -1373,17 +1443,19 @@ async def chat_query(request: Request, payload: dict | None = None) -> dict:
     answer = structured_answer
 
     if not answer:
-        prompt = _build_chat_prompt(question, context)
-        generated_text, generated_source = generate_text(prompt, default_config(), max_new_tokens=120, min_new_tokens=20)
-        if generated_text.strip():
-            answer = generated_text.strip()
-            answer_source = generated_source
+        runtime_config = default_config()
+        if runtime_config.llm_provider.strip().lower() == "extractive":
+            answer = _grounded_chat_fallback(question, context)
+            answer_source = "grounded-extractive"
         else:
-            answer = (
-                f"I found context for {context.get('title')}, but I could not generate a richer answer from the local model. "
-                "Try asking about decisions, action items, blockers, or outcomes."
-            )
-            answer_source = "template-fallback"
+            prompt = _build_chat_prompt(question, context)
+            generated_text, generated_source = generate_text(prompt, runtime_config, max_new_tokens=120, min_new_tokens=20)
+            if generated_text.strip():
+                answer = generated_text.strip()
+                answer_source = generated_source
+            else:
+                answer = _grounded_chat_fallback(question, context)
+                answer_source = "grounded-fallback"
 
     return {
         "answer": answer,
