@@ -8,9 +8,9 @@ The agentic upgrade path is documented in [AGENTIC_ARCHITECTURE.md](/C:/Users/ka
 
 The concrete cloud rollout plan now lives in [docs/GOOGLE_CLOUD_AGENT_IMPLEMENTATION_PLAN.md](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT_CV_AGENTIC/docs/GOOGLE_CLOUD_AGENT_IMPLEMENTATION_PLAN.md), and the first Agent Builder-facing tool contract is documented in [docs/AGENT_BUILDER_TOOLKIT.md](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT_CV_AGENTIC/docs/AGENT_BUILDER_TOOLKIT.md).
 
-For independent public hosting, use [DEPLOY_RENDER_NEON.md](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT_CV_AGENTIC/docs/DEPLOY_RENDER_NEON.md). A Render Blueprint file is included at [render.yaml](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT_CV_AGENTIC/render.yaml).
+For the current production-style cloud path, use Vercel for the frontend and Google Cloud Run for the AI service. The Cloud Run deployment steps live in [DEPLOY_CLOUD_RUN.md](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT_CV_AGENTIC/docs/DEPLOY_CLOUD_RUN.md).
 
-For the most practical full-feature cloud path, use [DEPLOY_CLOUD_RUN.md](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT_CV_AGENTIC/docs/DEPLOY_CLOUD_RUN.md).
+The older Render + Neon path is still documented in [DEPLOY_RENDER_NEON.md](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT_CV_AGENTIC/docs/DEPLOY_RENDER_NEON.md), but it is no longer the primary recommended route.
 
 The current codebase follows a deep-learning-only detection policy. If a required model is unavailable, the pipeline reports that feature as unavailable instead of falling back to heuristics.
 
@@ -51,10 +51,15 @@ If you want the architecture rationale and the doc/SRS contradictions spelled ou
 
 ## Requirements
 
-- Windows with Python 3.11 and Java installed
+- Windows with Python 3.11 and Java installed for full local development
 - PowerShell for the provided scripts
 - Enough disk space for local model caches
 - Hugging Face token in `python-ai/.env` if you want gated model access such as pyannote diarization
+
+For public hosting:
+
+- Vercel account for the frontend
+- Google Cloud project with Cloud Run enabled for the AI service
 
 Core Python dependencies live in [requirements-core.txt](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT_CV_AGENTIC/python-ai/requirements-core.txt). Heavier ML dependencies live in [requirements-ml.txt](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT_CV_AGENTIC/python-ai/requirements-ml.txt).
 
@@ -110,6 +115,29 @@ Open:
 - `http://localhost:8080` for the UI
 - `http://127.0.0.1:8000/health` for the AI health check
 - `http://localhost:8080/api/health` for the Java shell health check
+
+### Option 1B: Public Frontend On Vercel
+
+The repo now includes [vercel.json](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT_CV_AGENTIC/vercel.json) so the static frontend can be deployed directly on Vercel while API traffic is rewritten to the Cloud Run AI backend.
+
+Recommended public setup:
+
+- Vercel hosts the frontend and gives you the public app URL
+- Google Cloud Run hosts the FastAPI AI service
+- Vercel rewrites `/api/v1/*` requests to the Cloud Run backend
+
+Recommended shape:
+
+- `app.yourdomain.com` -> Vercel frontend
+- `api.yourdomain.com` -> Cloud Run backend, or keep the default `run.app` URL
+
+Vercel import settings:
+
+- Framework preset: `Other`
+- Root directory: repo root
+- Build command: blank
+- Output directory: blank
+- Install command: blank
 
 ### Option 2: Docker Compose
 
