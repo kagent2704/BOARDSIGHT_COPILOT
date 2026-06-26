@@ -853,7 +853,7 @@ def _build_chat_prompt(question: str, context: dict[str, Any]) -> str:
     ).strip()
 
     def compact(items: list[str]) -> str:
-        return "; ".join(items[:4]) if items else "None"
+        return "; ".join(items[:2]) if items else "None"
 
     decision_text = compact([str(item.get("text") or item.get("title") or "").strip() for item in decisions if str(item.get("text") or item.get("title") or "").strip()])
     action_text = compact([str(item.get("title") or item.get("text") or item.get("task") or "").strip() for item in actions if str(item.get("title") or item.get("text") or item.get("task") or "").strip()])
@@ -862,8 +862,8 @@ def _build_chat_prompt(question: str, context: dict[str, Any]) -> str:
     outcome_text = compact(outcomes)
 
     return (
-        "You are BoardSight Copilot. Answer the user's question using only the provided meeting context. "
-        "Be concise, practical, and specific. If context is missing, say so plainly and suggest the next useful question.\n\n"
+        "You are BoardSight Copilot. Answer using only the provided meeting context. "
+        "Be concise, factual, and practical. If context is missing, say so plainly.\n\n"
         f"Meeting title: {context.get('title')}\n"
         f"Source kind: {context.get('source_kind')}\n"
         f"Status: {context.get('status')}\n"
@@ -1449,7 +1449,7 @@ async def chat_query(request: Request, payload: dict | None = None) -> dict:
             answer_source = "grounded-extractive"
         else:
             prompt = _build_chat_prompt(question, context)
-            generated_text, generated_source = generate_text(prompt, runtime_config, max_new_tokens=120, min_new_tokens=20)
+            generated_text, generated_source = generate_text(prompt, runtime_config, max_new_tokens=80, min_new_tokens=8)
             if generated_text.strip():
                 answer = generated_text.strip()
                 answer_source = generated_source

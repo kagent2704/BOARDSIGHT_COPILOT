@@ -9,7 +9,7 @@ param(
     [string]$GitLabPrivateToken = "",
     [string]$LlmProvider = "extractive",
     [string]$GeminiApiKey = "",
-    [string]$GeminiModel = "gemini-3.5-flash",
+    [string]$GeminiModel = "gemini-3.1-flash-lite",
     [string]$Memory = "4Gi",
     [int]$Cpu = 2,
     [int]$TimeoutSeconds = 900,

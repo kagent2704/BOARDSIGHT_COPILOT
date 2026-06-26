@@ -225,7 +225,7 @@ Gemini setup example:
 ```powershell
 $env:BOARDSIGHT_LLM_PROVIDER="gemini"
 $env:GEMINI_API_KEY="YOUR_GEMINI_API_KEY"
-$env:BOARDSIGHT_GEMINI_MODEL="gemini-3.5-flash"
+$env:BOARDSIGHT_GEMINI_MODEL="gemini-3.1-flash-lite"
 ```
 
 If Gemini is unavailable, BoardSight falls back to grounded extractive answers instead of inventing unsupported meeting details.

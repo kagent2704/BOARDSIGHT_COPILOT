@@ -41,7 +41,7 @@ Optional but recommended for full execution workflows:
 Optional for higher-quality Copilot answers:
 
 - `GEMINI_API_KEY`
-- `BOARDSIGHT_GEMINI_MODEL` such as `gemini-3.5-flash`
+- `BOARDSIGHT_GEMINI_MODEL` such as `gemini-3.1-flash-lite`
 
 ## Recommended production-ish sizing
 
@@ -76,7 +76,7 @@ cd "C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT_CV_AGENTIC"
   -GitLabPrivateToken "replace-with-your-gitlab-token" `
   -LlmProvider "gemini" `
   -GeminiApiKey "replace-with-your-gemini-api-key" `
-  -GeminiModel "gemini-3.5-flash" `
+  -GeminiModel "gemini-3.1-flash-lite" `
   -Memory "4Gi" `
   -Cpu 2 `
   -TimeoutSeconds 900 `

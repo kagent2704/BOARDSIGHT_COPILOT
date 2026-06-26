@@ -104,7 +104,7 @@ def generate_text(prompt: str, config: AppConfig, max_new_tokens: int = 144, min
                 client, library_name = gemini
                 interaction = client.interactions.create(
                     model=config.gemini_model,
-                    input=" ".join(str(prompt or "").split()),
+                    input=" ".join(str(prompt or "").split())[:2200],
                 )
                 output_text = str(getattr(interaction, "output_text", "") or "").strip()
                 if output_text:
