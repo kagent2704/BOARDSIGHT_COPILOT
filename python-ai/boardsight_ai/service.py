@@ -4,7 +4,6 @@ import argparse
 import base64
 import json
 import os
-import sqlite3
 import sys
 import tempfile
 import threading
@@ -37,7 +36,9 @@ from boardsight_ai.storage import (
     append_live_session_event,
     append_live_visual_event,
     create_live_session,
+    execute,
     finalize_live_session,
+    fetchone,
     get_live_session,
     get_live_session_events,
     get_live_session_visual_events,
@@ -66,24 +67,23 @@ create_user(
 
 
 def _assign_orphaned_runs_to_admin() -> None:
-    with sqlite3.connect(AUTH_DB_PATH) as auth_connection:
-        admin_row = auth_connection.execute(
-            "SELECT id, username FROM users WHERE username = ?",
-            ("admin",),
-        ).fetchone()
+    admin_row = fetchone(
+        AUTH_DB_PATH,
+        "SELECT id, username FROM users WHERE LOWER(username) = LOWER(:username)",
+        {"username": "admin"},
+    )
     if admin_row is None:
         return
 
-    with sqlite3.connect(MEETING_DB_PATH) as meeting_connection:
-        meeting_connection.execute(
-            """
-            UPDATE meetings
-            SET user_id = ?, username = COALESCE(username, ?)
-            WHERE user_id IS NULL
-            """,
-            (int(admin_row[0]), str(admin_row[1])),
-        )
-        meeting_connection.commit()
+    execute(
+        MEETING_DB_PATH,
+        """
+        UPDATE meetings
+        SET user_id = :user_id, username = COALESCE(username, :username)
+        WHERE user_id IS NULL
+        """,
+        {"user_id": int(admin_row["id"]), "username": str(admin_row["username"])},
+    )
 
 
 _assign_orphaned_runs_to_admin()
