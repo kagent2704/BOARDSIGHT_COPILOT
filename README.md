@@ -1,93 +1,109 @@
 # BoardSight
 
-BoardSight is a multimodal meeting intelligence system for uploaded meeting recordings. It analyzes speech, speaker activity, visual artifacts, decision points, workflow transitions, and participant emotion/attention signals to produce structured outputs for review and export.
+BoardSight is a meeting-intelligence product for recorded and live meetings. Recorded uploads now run the lightweight BoardSight production pipeline: fast speech transcription, sparse sampled-frame visual analysis, person detection, structured workflow and decision extraction, exportable reports, and optional Gemini-backed reasoning.
 
-The current codebase follows a deep-learning-only detection policy. If a required model is unavailable, the pipeline reports that feature as unavailable instead of falling back to heuristics.
+This repository now ships one stable production path instead of multiple competing local analysis stacks.
 
-See [PROJECT_ALIGNMENT.md](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT/docs/PROJECT_ALIGNMENT.md) for the design direction that supersedes older papers and SRS language.
+It also includes a live-meeting workspace: start a session, stream speech or paste transcript updates, and use the in-meeting copilot as a companion popup for catch-up questions.
 
-## What The Project Contains
+## Production Pipeline
 
-- `java-app/`: Java web shell and UI
-- `python-ai/`: Python inference pipeline, FastAPI service, storage, and report generation
-- `scripts/`: Windows-oriented build and run scripts
-- `output/`: generated analyses, exported reports, cached app data
-- `docs/`: alignment notes and paper support material
-- `legacy/`: older prototype material kept for reference
+BoardSight now runs a single production pipeline for recorded meetings:
 
-## Core Capabilities
+1. Extract audio and generate a timestamped transcript
+2. Derive speaker participation and dominance from transcript timing
+3. Detect decisions, action items, blockers, and outcomes from transcript structure
+4. Inspect sparse sampled frames for presentation, screen-share, document, and participant-camera evidence
+5. Build workflow stages, execution tasks, and decision traces
+6. Generate exports and persist the normalized result contract
 
-- Upload a recorded meeting video through the web UI or run the pipeline directly from the CLI
-- Generate transcripts with timestamps
-- Estimate speaker dominance and participation balance
-- Detect decision moments with transformer classification
-- Classify visual artifacts such as slides, dashboards, charts, and speaker-video layouts
-- Build decision traces and execution-oriented workflow outputs
-- Run DeepFace emotion analysis and image-model-based attention classification
-- Export JSON, Markdown, PDF, XLSX, transcript CSV, and summary image outputs
+Optional Gemini use:
 
-## Current Technical Direction
+- If `BOARDSIGHT_LLM_PROVIDER=gemini` and `GEMINI_API_KEY` is set, BoardSight uses Gemini for structured JSON extraction and concise meeting summaries.
+- If Gemini is unavailable, BoardSight falls back to deterministic transcript-grounded heuristics.
 
-BoardSight is intentionally model-backed across its functional pipeline:
+## What Changed
 
-- ASR: `faster-whisper` by default, with transformer Whisper fallback
-- Text classification: `typeform/distilbert-base-uncased-mnli`
-- Image classification: `openai/clip-vit-base-patch32`
-- Emotion: `DeepFace`
-- Object detection: YOLO via `ultralytics`
-- Optional diarization: `pyannote/speaker-diarization-3.1`
+- The recorded-analysis runtime is `boardsight-production-lightweight-v1`
+- Older deep-profile requests are still accepted for compatibility, but they resolve to the same production pipeline
+- Meeting storage records:
+  - `runtime_profile`
+  - `data_contract_version`
+  - `requested_analysis_profile`
+  - `effective_analysis_profile`
 
-If you want the architecture rationale and the doc/SRS contradictions spelled out, start with [PROJECT_ALIGNMENT.md](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT/docs/PROJECT_ALIGNMENT.md).
+## Repository Layout
+
+- `java-app/`: Java shell and browser UI
+- `python-ai/`: AI service, pipeline, storage, reporting, CLI
+- `scripts/`: local build and run scripts
+- `output/`: analyzed meetings, report artifacts, app databases
+- `docs/`: supporting notes and older alignment docs
+- `legacy/`: older prototype assets
 
 ## Requirements
 
-- Windows with Python 3.11 and Java installed
-- PowerShell for the provided scripts
-- Enough disk space for local model caches
-- Hugging Face token in `python-ai/.env` if you want gated model access such as pyannote diarization
+- Python 3.11
+- Java
+- FFmpeg on PATH
+- PowerShell for the bundled scripts on Windows
 
-Core Python dependencies live in [requirements-core.txt](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT/python-ai/requirements-core.txt). Heavier ML dependencies live in [requirements-ml.txt](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT/python-ai/requirements-ml.txt).
+Recommended Python install sets:
 
-## Install Python Dependencies
+- [python-ai/requirements-core.txt](C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT_CV\python-ai\requirements-core.txt)
+- [python-ai/requirements-runtime.txt](C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT_CV\python-ai\requirements-runtime.txt)
+- [python-ai/requirements-dev.txt](C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT_CV\python-ai\requirements-dev.txt)
+
+The old production install path that relied on `requirements-ml.txt` has been removed.
+
+## Install
 
 ```powershell
-cd "C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT"
+cd "C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT_CV"
 python -m pip install -r .\python-ai\requirements-core.txt
-python -m pip install -r .\python-ai\requirements-ml.txt
+python -m pip install -r .\python-ai\requirements-runtime.txt
 ```
 
-## Run The Project
-
-### Option 1: Web App With AI Service
-
-Open two terminals.
-
-Terminal 1, AI service in PowerShell:
+For tests:
 
 ```powershell
-cd "C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT"
+python -m pip install -r .\python-ai\requirements-dev.txt
+```
+
+## Environment
+
+Start from [python-ai/sample-config.env](C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT_CV\python-ai\sample-config.env).
+
+Important settings:
+
+```powershell
+$env:BOARDSIGHT_ANALYSIS_PROFILE="production"
+$env:BOARDSIGHT_LLM_PROVIDER="gemini"
+$env:GEMINI_API_KEY="your-key"
+$env:BOARDSIGHT_ENABLE_DIARIZATION="false"
+$env:BOARDSIGHT_FASTER_WHISPER_MODEL="tiny.en"
+```
+
+## Run Locally
+
+### Terminal 1: AI Service
+
+```powershell
+cd "C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT_CV"
 $env:PYTHONPATH="python-ai"
 python -m boardsight_ai.service --host 127.0.0.1 --port 8000
 ```
 
-Terminal 1, AI service in Command Prompt:
-
-```cmd
-cd "C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT"
-set PYTHONPATH=python-ai
-python -m boardsight_ai.service --host 127.0.0.1 --port 8000
-```
-
-You can also use the script:
+Or:
 
 ```powershell
 .\scripts\run-ai-service.ps1
 ```
 
-Terminal 2, web UI:
+### Terminal 2: Web App
 
 ```powershell
-cd "C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT"
+cd "C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT_CV"
 $env:BOARDSIGHT_AI_URL="http://127.0.0.1:8000"
 .\scripts\build-java.ps1
 java -jar .\java-app\build\boardsight.jar --port 8080
@@ -95,174 +111,100 @@ java -jar .\java-app\build\boardsight.jar --port 8080
 
 Open:
 
-- `http://localhost:8080` for the UI
-- `http://127.0.0.1:8000/health` for the AI health check
-- `http://localhost:8080/api/health` for the Java shell health check
+- `http://localhost:8080`
+- `http://127.0.0.1:8000/health`
 
-### Option 2: Docker Compose
+## Live Meeting Copilot
+
+From the `Live Meeting` workspace in the UI you can:
+
+- start a live session
+- use browser speech recognition when supported
+- paste manual transcript updates if speech capture is unavailable
+- ask questions like:
+  - `What happened so far?`
+  - `What decisions have been made?`
+  - `I joined 10 minutes late. What happened before I joined?`
+
+Live copilot answers are grounded in the transcript accumulated so far and fall back to local heuristic reasoning if Gemini is unavailable.
+
+## CLI Run
 
 ```powershell
-cd "C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT"
-docker compose up --build
-```
-
-This starts:
-
-- `boardsight-ai` on port `8000`
-- `boardsight-web` on port `8080`
-
-### Option 3: CLI Only
-
-```powershell
-cd "C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT"
+cd "C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT_CV"
 python .\python-ai\boardsight_ai\cli.py --video ".\output\short_sample.mp4" --output-dir ".\output\manual-run"
 ```
 
-## Demo Login
+Optional clipped analysis:
 
-The FastAPI service seeds a default admin account on startup:
+```powershell
+python .\python-ai\boardsight_ai\cli.py `
+  --video ".\output\short_sample.mp4" `
+  --output-dir ".\output\manual-run" `
+  --start-seconds 0 `
+  --end-seconds 180 `
+  --analysis-profile production
+```
+
+## Docker
+
+The Python image now installs the production runtime dependencies instead of the old full ML stack.
+
+```powershell
+cd "C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT_CV"
+docker compose up --build
+```
+
+## Default Login
 
 - Username: `admin`
 - Password: `boardsight123`
 
-## Typical Workflow
+## Output Contract
 
-1. Start the AI service.
-2. Start the Java web app.
-3. Open `http://localhost:8080`.
-4. Sign in with the demo admin account.
-5. Go to `Upload & Analyze`.
-6. Upload a meeting video.
-7. Review outputs in:
-   - `Home`
-   - `Meetings`
-   - `Decision Trace`
-   - `Workflow Modelling`
-8. Export reports from the meeting detail view.
-
-## Output Files
-
-Each run writes into a folder under `output/`. Typical outputs include:
+Each run writes a result folder under `output/`, typically containing:
 
 - `boardsight_result.json`
 - `structured_report.md`
 - `structured_report.pdf`
 - `structured_report.xlsx`
+- `structured_report.docx`
 - `transcript.csv`
 - `summary_card.png`
 - `performance_report.json`
 
-Meeting metadata is stored in:
+App databases:
 
 - `output/appdata/boardsight_meetings.db`
 - `output/appdata/boardsight_auth.db`
 
-## Performance Tuning
+The persisted result metadata now includes:
 
-The project now defaults to faster CPU-friendly settings:
+- `data_contract_version`
+- `storage_schema_version`
+- `requested_analysis_profile`
+- `effective_analysis_profile`
+- `performance_report.runtime_profile`
 
-- `faster-whisper` model defaults to `tiny.en`
-- diarization is disabled by default for speed
-- visual, attention, face, and workflow passes are sample-capped
-- all configured model-backed stages still run; the main speedup path is lighter sampling plus optional clip-range preprocessing before analysis
-
-Useful environment variables:
-
-```powershell
-$env:BOARDSIGHT_FASTER_WHISPER_MODEL="tiny.en"
-$env:BOARDSIGHT_ENABLE_DIARIZATION="false"
-$env:BOARDSIGHT_VIDEO_SAMPLE_SECONDS="20"
-$env:BOARDSIGHT_VISUAL_SAMPLE_SECONDS="45"
-$env:BOARDSIGHT_MAX_VISUAL_SAMPLES="2"
-$env:BOARDSIGHT_MAX_ATTENTION_SAMPLES="1"
-$env:BOARDSIGHT_MAX_FACE_SAMPLES="1"
-$env:BOARDSIGHT_MAX_WORKFLOW_SEGMENTS="12"
-```
-
-Fast demo profile:
+## Testing
 
 ```powershell
-$env:BOARDSIGHT_VISUAL_SAMPLE_SECONDS="60"
-$env:BOARDSIGHT_MAX_VISUAL_SAMPLES="1"
-$env:BOARDSIGHT_MAX_ATTENTION_SAMPLES="1"
-$env:BOARDSIGHT_MAX_FACE_SAMPLES="1"
-$env:BOARDSIGHT_MAX_WORKFLOW_SEGMENTS="8"
+cd "C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT_CV"
+pytest .\python-ai\tests -q
+python -m compileall .\python-ai\boardsight_ai .\python-ai\tests
+cd .\java-app
+cmd /c "javac -d build\classes @java_sources.txt"
 ```
 
-Slower, richer profile:
+One-command local smoke check:
 
 ```powershell
-$env:BOARDSIGHT_ENABLE_DIARIZATION="true"
-$env:BOARDSIGHT_MAX_VISUAL_SAMPLES="4"
-$env:BOARDSIGHT_MAX_ATTENTION_SAMPLES="4"
-$env:BOARDSIGHT_MAX_FACE_SAMPLES="2"
-$env:BOARDSIGHT_MAX_WORKFLOW_SEGMENTS="32"
+cd "C:\Users\kashm\OneDrive\Desktop\BOARDSIGHT_CV"
+.\scripts\smoke-test-local.ps1
 ```
 
-## Reported Stage Timings
+## Product Notes
 
-Pipeline output JSON now includes stage timing metadata under:
-
-`metadata.performance_report.stage_timings_seconds`
-
-Budget tracking and any budget-protection skips are also recorded under:
-
-`metadata.analysis_range`
-
-That is the first place to look when a run used a selected video segment instead of the full recording.
-
-## Fast Segment Analysis
-
-The upload screen now supports optional `Start Time` and `End Time` inputs.
-
-- Leave both blank to analyze the full video.
-- Enter `mm:ss`, `hh:mm:ss`, or raw seconds to analyze only that portion.
-- BoardSight performs fast FFmpeg-based clip preprocessing first, then runs the full deep-learning pipeline on the selected segment.
-
-## Known Notes
-
-- If port `8000` is already occupied, the AI service will fail to bind. Stop the existing process or use another port.
-- If port `8080` is already occupied, launch the Java app with a different `--port`.
-- DOCX export may fail on some Windows machines because `lxml` can be blocked by local application-control policy. PDF, XLSX, Markdown, transcript CSV, image summary, and JSON still complete.
-- Older documents in the repo may still describe hybrid or heuristic behavior. The current implementation is model-backed and documented in [PROJECT_ALIGNMENT.md](/C:/Users/kashm/OneDrive/Desktop/BOARDSIGHT/docs/PROJECT_ALIGNMENT.md).
-
-## Helpful Commands
-
-Build the Java app:
-
-```powershell
-.\scripts\build-java.ps1
-```
-
-Run Java CLI mode:
-
-```powershell
-.\scripts\run-java.ps1 -video "C:\path\to\meeting.mp4"
-```
-
-Run AI service script:
-
-```powershell
-.\scripts\run-ai-service.ps1
-```
-
-Health checks:
-
-```powershell
-Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8000/health
-Invoke-WebRequest -UseBasicParsing http://localhost:8080/api/health
-```
-
-## Repository Structure
-
-```text
-BOARDSIGHT/
-|- docs/
-|- java-app/
-|- legacy/
-|- output/
-|- python-ai/
-|- scripts/
-|- docker-compose.yml
-|- README.md
-```
+- This repo is oriented around one stable production pipeline instead of a research-style pile of optional vision models.
+- Gemini improves structured answers and summaries, but the product still returns usable outputs without it.
+- The old heavy analysis modules have been removed from the production code path and dependency bundle.

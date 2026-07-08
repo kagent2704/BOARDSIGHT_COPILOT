@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import sqlite3
@@ -26,14 +27,27 @@ except Exception as exc:  # pragma: no cover
     ) from exc
 
 from boardsight_ai.pipeline import run_pipeline, write_result
+from boardsight_ai.live_session import answer_live_copilot, build_live_session_payload
 from boardsight_ai.providers.media import clip_video_fast
 from boardsight_ai.auth import authenticate_user, create_user, get_session_user, init_auth_storage
 from boardsight_ai.config import default_config
-from boardsight_ai.features import decision_moments, visual_artifacts, workflow_engine
-from boardsight_ai.features.scoring import _classifier as _scoring_classifier
-from boardsight_ai.providers.llm import _summarizer
 from boardsight_ai.providers.speech import _faster_whisper_model
-from boardsight_ai.storage import get_meeting_result, init_storage, list_meeting_results, save_meeting_result
+from boardsight_ai.providers.vision import analyze_sparse_frame
+from boardsight_ai.storage import (
+    append_live_session_event,
+    append_live_visual_event,
+    create_live_session,
+    finalize_live_session,
+    get_live_session,
+    get_live_session_events,
+    get_live_session_visual_events,
+    get_meeting_result,
+    init_storage,
+    list_live_sessions,
+    list_meeting_results,
+    save_live_copilot_reply,
+    save_meeting_result,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "output" / "appdata"
@@ -94,17 +108,7 @@ def _warm_model_caches() -> None:
 
     whisper_model = _faster_whisper_model(config.faster_whisper_model)
     record_step(f"faster-whisper:{config.faster_whisper_model}", whisper_model is not None)
-
-    text_classifier = decision_moments._classifier(config.text_classifier_model)
-    record_step(f"text-classifier:{config.text_classifier_model}", text_classifier is not None)
-    record_step(f"workflow-classifier:{config.text_classifier_model}", workflow_engine._classifier(config.text_classifier_model) is not None)
-    record_step(f"scoring-classifier:{config.text_classifier_model}", _scoring_classifier(config.text_classifier_model) is not None)
-
-    image_classifier = visual_artifacts._image_classifier(config.image_classifier_model)
-    record_step(f"image-classifier:{config.image_classifier_model}", image_classifier is not None)
-    record_step("ocr:trocr-small-printed", visual_artifacts._ocr_components() is not None)
-    record_step("image-captioning:blip-base", visual_artifacts._image_captioner() is not None)
-    record_step("presentation-summary:flan-t5-small", _summarizer() is not None)
+    record_step("pipeline:boardsight-production-lightweight-v1", True)
 
     WARMUP_STATE["completed"] = True
     WARMUP_STATE["in_progress"] = False
@@ -235,6 +239,8 @@ def _summarize_meeting_row(row: dict) -> dict:
         "impactScore": float(row.get("impact_score") or 0),
         "productivityScore": float(row.get("productivity_score") or 0),
         "executionReadiness": float(row.get("execution_readiness") or 0),
+        "runtimeProfile": row.get("runtime_profile"),
+        "dataContractVersion": row.get("data_contract_version"),
     }
 
 
@@ -285,6 +291,187 @@ def meeting_report(meeting_id: int, file_name: str, request: Request):
     if not candidate.exists():
         raise HTTPException(status_code=404, detail="Requested report file was not found.")
     return FileResponse(candidate, filename=candidate.name)
+
+
+def _resolve_owned_live_session(session_id: int, user: dict) -> dict:
+    record = get_live_session(MEETING_DB_PATH, session_id, user_id=int(user["user_id"]))
+    if record is None:
+        raise HTTPException(status_code=404, detail="Live session not found.")
+    return record
+
+
+def _decode_base64_frame(image_base64: str):
+    cv2 = __import__("cv2")
+    numpy = __import__("numpy")
+    normalized = str(image_base64 or "").strip()
+    if "," in normalized:
+        normalized = normalized.split(",", 1)[1]
+    raw_bytes = base64.b64decode(normalized)
+    array = numpy.frombuffer(raw_bytes, dtype=numpy.uint8)
+    frame = cv2.imdecode(array, cv2.IMREAD_COLOR)
+    if frame is None:
+        raise ValueError("Unable to decode image frame.")
+    return frame
+
+
+@app.get("/api/v1/live/active")
+def live_active(request: Request) -> dict:
+    user = _require_session_user(request)
+    sessions = list_live_sessions(MEETING_DB_PATH, user_id=int(user["user_id"]), status="active")
+    if not sessions:
+        return {"session": None}
+    config = default_config()
+    session_row = sessions[0]
+    event_rows = get_live_session_events(MEETING_DB_PATH, int(session_row["id"]))
+    visual_rows = get_live_session_visual_events(MEETING_DB_PATH, int(session_row["id"]))
+    return build_live_session_payload(session_row, event_rows, config, visual_rows=visual_rows)
+
+
+@app.post("/api/v1/live/start")
+async def start_live_session(request: Request, payload: dict | None = None) -> dict:
+    user = _require_session_user(request)
+    request_payload = await _collect_request_payload(request, payload)
+    title = str(request_payload.get("title", "")).strip() or f"Live Session {datetime.utcnow().strftime('%H:%M')}"
+    session_id = create_live_session(
+        MEETING_DB_PATH,
+        title,
+        user_id=int(user["user_id"]),
+        username=str(user["username"]),
+    )
+    session_row = _resolve_owned_live_session(session_id, user)
+    return {
+        "session": {
+            "id": session_id,
+            "title": title,
+            "status": session_row.get("status", "active"),
+            "started_at": session_row.get("started_at", ""),
+        }
+    }
+
+
+@app.get("/api/v1/live/{session_id}")
+def live_session_detail(session_id: int, request: Request) -> dict:
+    user = _require_session_user(request)
+    session_row = _resolve_owned_live_session(session_id, user)
+    event_rows = get_live_session_events(MEETING_DB_PATH, session_id)
+    visual_rows = get_live_session_visual_events(MEETING_DB_PATH, session_id)
+    config = default_config()
+    return build_live_session_payload(session_row, event_rows, config, visual_rows=visual_rows)
+
+
+@app.post("/api/v1/live/{session_id}/events")
+async def append_live_event(session_id: int, request: Request, payload: dict | None = None) -> dict:
+    user = _require_session_user(request)
+    _resolve_owned_live_session(session_id, user)
+    request_payload = await _collect_request_payload(request, payload)
+    text = str(request_payload.get("text", "")).strip()
+    speaker = str(request_payload.get("speaker", "")).strip() or str(user.get("display_name") or user.get("username") or "Participant")
+    start_seconds = _parse_optional_float(request_payload.get("start_seconds"))
+    end_seconds = _parse_optional_float(request_payload.get("end_seconds"))
+    if not text:
+        raise HTTPException(status_code=400, detail="Live transcript text is required.")
+    try:
+        event_id = append_live_session_event(
+            MEETING_DB_PATH,
+            session_id,
+            text,
+            speaker=speaker,
+            start_seconds=start_seconds,
+            end_seconds=end_seconds,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    session_row = _resolve_owned_live_session(session_id, user)
+    event_rows = get_live_session_events(MEETING_DB_PATH, session_id)
+    visual_rows = get_live_session_visual_events(MEETING_DB_PATH, session_id)
+    config = default_config()
+    payload = build_live_session_payload(session_row, event_rows, config, visual_rows=visual_rows)
+    payload["event_id"] = event_id
+    return payload
+
+
+@app.post("/api/v1/live/{session_id}/visual")
+async def append_live_visual(session_id: int, request: Request, payload: dict | None = None) -> dict:
+    user = _require_session_user(request)
+    session_row = _resolve_owned_live_session(session_id, user)
+    request_payload = await _collect_request_payload(request, payload)
+    image_base64 = str(request_payload.get("image_base64", "")).strip()
+    timestamp_seconds = _parse_optional_float(request_payload.get("timestamp_seconds"))
+    if not image_base64:
+        raise HTTPException(status_code=400, detail="image_base64 is required.")
+    try:
+        frame = _decode_base64_frame(image_base64)
+        config = default_config()
+        analysis = analyze_sparse_frame(frame, config)
+        visual_event_id = append_live_visual_event(
+            MEETING_DB_PATH,
+            session_id,
+            timestamp_seconds=float(timestamp_seconds or 0.0),
+            artifact_type=str(analysis.get("artifact_type") or ""),
+            display_mode=str(analysis.get("display_mode") or ""),
+            visible_people_count=int(analysis.get("visible_people_count") or 0),
+            screen_present=bool(analysis.get("screen_present")),
+            chart_present=bool(analysis.get("chart_present")),
+            document_present=bool(analysis.get("document_present")),
+            textual_content=str(analysis.get("textual_content") or ""),
+            summary=str(analysis.get("summary") or ""),
+            confidence=float(analysis.get("confidence") or 0.0),
+            detections=list(analysis.get("detections") or []),
+            source=str(analysis.get("source") or ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Live visual analysis failed: {exc}") from exc
+
+    event_rows = get_live_session_events(MEETING_DB_PATH, session_id)
+    visual_rows = get_live_session_visual_events(MEETING_DB_PATH, session_id)
+    config = default_config()
+    live_payload = build_live_session_payload(session_row, event_rows, config, visual_rows=visual_rows)
+    live_payload["visual_event_id"] = visual_event_id
+    live_payload["latest_visual_analysis"] = analysis
+    return live_payload
+
+
+@app.post("/api/v1/live/{session_id}/copilot")
+async def live_copilot(session_id: int, request: Request, payload: dict | None = None) -> dict:
+    user = _require_session_user(request)
+    session_row = _resolve_owned_live_session(session_id, user)
+    request_payload = await _collect_request_payload(request, payload)
+    question = str(request_payload.get("question", "")).strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Question is required.")
+    event_rows = get_live_session_events(MEETING_DB_PATH, session_id)
+    visual_rows = get_live_session_visual_events(MEETING_DB_PATH, session_id)
+    config = default_config()
+    live_payload = build_live_session_payload(session_row, event_rows, config, visual_rows=visual_rows)
+    answer, source = answer_live_copilot(live_payload, question, config)
+    save_live_copilot_reply(MEETING_DB_PATH, session_id, answer, source)
+    return {
+        "session_id": session_id,
+        "question": question,
+        "answer": answer,
+        "source": source,
+        "event_count": live_payload["session"]["event_count"],
+        "summary": live_payload["copilot_context"]["summary"],
+    }
+
+
+@app.post("/api/v1/live/{session_id}/finalize")
+def finalize_live(session_id: int, request: Request) -> dict:
+    user = _require_session_user(request)
+    _resolve_owned_live_session(session_id, user)
+    finalize_live_session(MEETING_DB_PATH, session_id)
+    session_row = _resolve_owned_live_session(session_id, user)
+    return {
+        "session": {
+            "id": session_id,
+            "title": session_row.get("title", ""),
+            "status": session_row.get("status", "finalized"),
+            "started_at": session_row.get("started_at", ""),
+            "finalized_at": session_row.get("finalized_at", ""),
+        }
+    }
 
 
 def _build_output_payload(result, output_dir: Path, user: dict | None = None) -> dict:
@@ -345,6 +532,7 @@ def _run_pipeline_for_shared_path(
     user: dict | None = None,
     start_seconds: float | None = None,
     end_seconds: float | None = None,
+    analysis_profile: str | None = None,
 ) -> dict:
     candidate_path = Path(unquote(shared_file_path)).resolve()
     output_root = PROJECT_ROOT / "output"
@@ -354,7 +542,12 @@ def _run_pipeline_for_shared_path(
         raise HTTPException(status_code=400, detail="Shared file path does not exist for AI processing.")
     output_dir = _resolve_output_dir(output_dir_name)
     analysis_input_path, analysis_range = _resolve_analysis_input(candidate_path, output_dir, start_seconds, end_seconds)
-    result = run_pipeline(analysis_input_path, output_dir, analysis_range=analysis_range)
+    result = run_pipeline(
+        analysis_input_path,
+        output_dir,
+        analysis_range=analysis_range,
+        analysis_profile=analysis_profile,
+    )
     return _build_output_payload(result, output_dir, user=user)
 
 
@@ -374,6 +567,11 @@ async def run_pipeline_path_endpoint(request: Request, payload: dict | None = No
         or str(request.query_params.get("output_dir_name", "")).strip()
         or None
     )
+    analysis_profile = (
+        str(request_payload.get("analysis_profile", "")).strip()
+        or str(request.query_params.get("analysis_profile", "")).strip()
+        or None
+    )
     start_seconds = _parse_optional_float(request_payload.get("start_seconds", request.query_params.get("start_seconds")))
     end_seconds = _parse_optional_float(request_payload.get("end_seconds", request.query_params.get("end_seconds")))
     if not file_path:
@@ -384,6 +582,7 @@ async def run_pipeline_path_endpoint(request: Request, payload: dict | None = No
         user=user,
         start_seconds=start_seconds,
         end_seconds=end_seconds,
+        analysis_profile=analysis_profile,
     )
 
 
@@ -429,6 +628,11 @@ async def run_pipeline_endpoint(
     shared_file_path = str(request_payload.get("file_path", "")).strip() or request_query.get("file_path")
     start_seconds = _parse_optional_float(request_payload.get("start_seconds", request_query.get("start_seconds")))
     end_seconds = _parse_optional_float(request_payload.get("end_seconds", request_query.get("end_seconds")))
+    analysis_profile = (
+        str(request_payload.get("analysis_profile", "")).strip()
+        or str(request_query.get("analysis_profile", "")).strip()
+        or None
+    )
     if resolved_upload is None:
         if shared_file_path:
             return _run_pipeline_for_shared_path(
@@ -437,6 +641,7 @@ async def run_pipeline_endpoint(
                 user=user,
                 start_seconds=start_seconds,
                 end_seconds=end_seconds,
+                analysis_profile=analysis_profile,
             )
 
         try:
@@ -462,7 +667,12 @@ async def run_pipeline_endpoint(
             raise HTTPException(status_code=400, detail="Failed to persist uploaded file.")
 
         analysis_input_path, analysis_range = _resolve_analysis_input(video_path, output_dir, start_seconds, end_seconds)
-        result = run_pipeline(analysis_input_path, output_dir, analysis_range=analysis_range)
+        result = run_pipeline(
+            analysis_input_path,
+            output_dir,
+            analysis_range=analysis_range,
+            analysis_profile=analysis_profile,
+        )
         return _build_output_payload(result, output_dir, user=user)
 
 

@@ -103,10 +103,10 @@ def build_document() -> None:
     add_heading(document, "Change Overview", level=1)
     rows = [
         ("CV Results UI", "Added a dedicated Computer Vision Coverage panel with display-mode, artifact, and timeline views.", "index.html, app.js, styles.css"),
-        ("Pipeline Speed", "Improved CPU practicality with lighter default sampling and model caching.", "config.py, speech.py, llm.py"),
+        ("Production Pipeline", "Unified the product around a single transcript-first production pipeline with stable metadata.", "pipeline.py, lightweight_pipeline.py, storage.py"),
         ("Range-based Analysis", "Added fast FFmpeg preprocessing and user-selected start/end analysis windows.", "media.py, service.py, cli.py, PythonPipelineRunner.java"),
-        ("Model Integrity", "Kept all model-backed stages active while preserving the no-heuristics policy.", "pipeline.py"),
-        ("Slide Content Extraction", "Extended presentation windows to extract best-effort OCR text from slides and documents.", "visual_artifacts.py, models.py, app.js"),
+        ("Gemini Structuring", "Added optional Gemini-backed structured extraction and concise summaries with heuristic fallback.", "llm.py, lightweight_pipeline.py"),
+        ("Slide Content Signals", "Preserved presentation evidence through transcript-linked visual cues and export metadata.", "lightweight_pipeline.py, models.py, app.js"),
     ]
     for area, outcome, files in rows:
         paragraph = document.add_paragraph(style="List Bullet")
@@ -125,19 +125,20 @@ def build_document() -> None:
             ],
         },
         {
-            "title": "2. Faster CPU-Friendly Defaults",
-            "summary": "The default pipeline profile was tightened to reduce unnecessary visual and workflow sampling while still using the same model-backed stack. This lowers the amount of work done per run, especially on CPU-only machines.",
+            "title": "2. Unified Production Pipeline",
+            "summary": "The product now routes all recorded-meeting analysis through one transcript-first production pipeline. Legacy deep-mode requests are accepted only as compatibility labels and do not trigger a separate heavyweight execution branch.",
             "snippets": [
-                ("Sampling defaults in AppConfig", "python-ai/boardsight_ai/config.py", 29, 38),
+                ("Production profile and runtime config", "python-ai/boardsight_ai/config.py", 18, 35),
+                ("Single pipeline routing", "python-ai/boardsight_ai/pipeline.py", 11, 28),
             ],
         },
         {
             "title": "3. Model Caching Improvements",
-            "summary": "Repeated model initialization was a major source of delay. Faster-Whisper and the summarization pipeline are now cached so they are loaded once and reused across runs.",
+            "summary": "Repeated model initialization was a major source of delay. Faster-Whisper remains cached, while summary generation now prefers Gemini and falls back to a lightweight local heuristic instead of booting the old transformer summary stack.",
             "snippets": [
                 ("Cached Faster-Whisper model", "python-ai/boardsight_ai/providers/speech.py", 17, 27),
                 ("Transcription now reuses cached model", "python-ai/boardsight_ai/providers/speech.py", 43, 48),
-                ("Cached summarizer pipeline", "python-ai/boardsight_ai/providers/llm.py", 11, 29),
+                ("Gemini plus heuristic summary path", "python-ai/boardsight_ai/providers/llm.py", 41, 101),
             ],
         },
         {
@@ -153,20 +154,19 @@ def build_document() -> None:
             ],
         },
         {
-            "title": "5. Full Deep-Learning Pipeline Preserved",
-            "summary": "The range-based flow was deliberately implemented without replacing any model stage with heuristics. The pipeline still runs transcription, speaker modeling, visual artifacts, workflow, decision traces, attention/sentiment, and scoring on the selected input segment.",
+            "title": "5. Production Pipeline Outputs",
+            "summary": "The range-based flow now feeds a production transcript-first analysis engine that still produces the same top-level BoardSight contract: speakers, decisions, visual evidence, workflow, traces, attention, scores, exports, and persisted storage metadata.",
             "snippets": [
-                ("Pipeline stage flow with analysis_range metadata", "python-ai/boardsight_ai/pipeline.py", 26, 93),
+                ("Lightweight pipeline flow", "python-ai/boardsight_ai/lightweight_pipeline.py", 425, 581),
             ],
         },
         {
-            "title": "6. Slide and Presentation Content Extraction",
-            "summary": "Presentation-like windows now trigger a best-effort OCR extraction pass using TrOCR. The resulting text is saved into each visual artifact and displayed in a new Extracted Slide Content area in the CV panel.",
+            "title": "6. Slide and Presentation Content Signals",
+            "summary": "Presentation-like transcript cues now generate structured visual evidence windows. The resulting content summaries and insights still surface in the CV panel and the exported reports without depending on the removed OCR-heavy legacy path.",
             "snippets": [
                 ("VisualArtifact model now stores content_text", "python-ai/boardsight_ai/models.py", 39, 47),
-                ("OCR components and presentation detection", "python-ai/boardsight_ai/features/visual_artifacts.py", 28, 85),
-                ("Content text extraction and artifact enrichment", "python-ai/boardsight_ai/features/visual_artifacts.py", 114, 155),
-                ("Artifact creation with content_text", "python-ai/boardsight_ai/features/visual_artifacts.py", 194, 213),
+                ("Transcript-linked visual artifact generation", "python-ai/boardsight_ai/lightweight_pipeline.py", 139, 173),
+                ("Presentation insight metadata", "python-ai/boardsight_ai/lightweight_pipeline.py", 543, 572),
                 ("UI section for extracted slide content", "java-app/src/main/resources/public/app.js", 697, 705),
                 ("Renderer for content artifacts", "java-app/src/main/resources/public/app.js", 1107, 1119),
             ],

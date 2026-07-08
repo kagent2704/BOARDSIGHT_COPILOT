@@ -30,6 +30,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--start-seconds", type=float, default=None, help="Optional analysis start offset in seconds.")
     parser.add_argument("--end-seconds", type=float, default=None, help="Optional analysis end offset in seconds.")
+    parser.add_argument(
+        "--analysis-profile",
+        default="",
+        help="Optional analysis profile label for recorded-meeting runs. Legacy deep values are accepted, but production requests route to the lightweight BoardSight pipeline.",
+    )
     return parser.parse_args()
 
 
@@ -47,7 +52,12 @@ def main() -> int:
         clipped_input_path = output_dir / "analysis_input.mp4"
         analysis_range = clip_video_fast(video_path, clipped_input_path, args.start_seconds, args.end_seconds)
         analysis_input_path = Path(str(analysis_range["output_path"])).resolve()
-    result = run_pipeline(analysis_input_path, output_dir, analysis_range=analysis_range)
+    result = run_pipeline(
+        analysis_input_path,
+        output_dir,
+        analysis_range=analysis_range,
+        analysis_profile=args.analysis_profile or None,
+    )
     result_path = Path(args.result_file).resolve() if args.result_file else output_dir / "boardsight_result.json"
     write_result(result, result_path)
     default_db = output_dir.parent / "appdata" / "boardsight_meetings.db"

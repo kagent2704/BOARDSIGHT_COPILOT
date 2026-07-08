@@ -8,7 +8,6 @@ ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 ENV MPLBACKEND=Agg
 ENV HF_HOME=/workspace/.cache/huggingface
-ENV DEEPFACE_HOME=/workspace/.cache/deepface
 ENV TF_CPP_MIN_LOG_LEVEL=2
 ENV HF_HUB_DISABLE_SYMLINKS_WARNING=1
 ENV BOARDSIGHT_WARM_MODELS=0
@@ -32,13 +31,13 @@ RUN apt-get update \
         wget \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements-core.txt requirements-ml.txt ./
+COPY requirements-core.txt requirements-runtime.txt ./
 RUN pip install --upgrade pip setuptools wheel \
-    && pip install -r requirements-core.txt -r requirements-ml.txt
+    && pip install -r requirements-core.txt -r requirements-runtime.txt
 
 COPY . /workspace/python-ai
 
-RUN mkdir -p /workspace/output /workspace/.cache/huggingface /workspace/.cache/deepface
+RUN mkdir -p /workspace/output /workspace/.cache/huggingface
 
 EXPOSE 8000
 

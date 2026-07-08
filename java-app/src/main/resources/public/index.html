@@ -60,6 +60,7 @@
               <input type="file" id="uploadInput" accept="video/*" hidden>
               <span>Upload Meeting</span>
             </label>
+            <button id="openLivePopupBtn" class="ghost-btn">Live Copilot Popup</button>
             <button id="refreshBtn" class="ghost-btn">Refresh</button>
             <button id="signOutBtn" class="ghost-btn">Sign Out</button>
             <div id="topAvatar" class="avatar">JD</div>
@@ -72,6 +73,7 @@
               <button class="nav-item active" data-view="dashboard">Home</button>
               <button class="nav-item" data-view="meetings">Meetings</button>
               <button class="nav-item" data-view="analyze">Upload & Analyze</button>
+              <button class="nav-item" data-view="live">Live Meeting</button>
               <button class="nav-item" data-view="trace">Decision Trace</button>
               <button class="nav-item" data-view="workflow">Workflow Modelling</button>
             </div>
@@ -234,15 +236,22 @@
               <div class="panel-title-row">
                 <div>
                   <h3>Upload & Analyze</h3>
-                  <p class="muted">Run model-backed meeting intelligence on a recorded meeting.</p>
+                  <p class="muted">Run the lightweight BoardSight recorded-meeting pipeline with fast speech analysis, sparse visual sampling, person detection, structured decisions, and optional Gemini reasoning.</p>
                 </div>
-                <span class="model-pill">DL-only pipeline</span>
+                <span class="model-pill">Lightweight production pipeline</span>
               </div>
               <div class="upload-box">
                 <label class="upload-zone" for="uploadInput">
                   <strong>Choose a meeting video</strong>
                   <span>MP4 or other browser-supported video formats</span>
                 </label>
+                <div class="analysis-range-grid">
+                  <label>Analysis Mode
+                    <select id="analysisProfileInput">
+                      <option value="production" selected>BoardSight Production Analysis</option>
+                    </select>
+                  </label>
+                </div>
                 <div class="analysis-range-grid">
                   <label>Start Time
                     <input type="text" id="analysisStartInput" placeholder="00:00 or 00:10:00">
@@ -251,8 +260,85 @@
                     <input type="text" id="analysisEndInput" placeholder="Leave blank for full video">
                   </label>
                 </div>
-                <p class="muted range-note">All deep learning stages still run. These fields only choose which part of the video gets analyzed.</p>
+                <p class="muted range-note">Recorded meetings use the lightweight multimodal production path. The live copilot remains an additional companion layer for in-meeting questions and catch-up assistance.</p>
                 <div id="uploadStatus" class="upload-status">No upload in progress.</div>
+              </div>
+            </article>
+          </section>
+
+          <section id="liveView" class="content-view hidden">
+            <article class="panel upload-layout">
+              <div class="panel-title-row">
+                <div>
+                  <h3>Live Meeting Copilot</h3>
+                  <p class="muted">Capture meeting updates as they happen and ask BoardSight what has already been discussed, decided, assigned, or blocked.</p>
+                </div>
+                <span class="model-pill">Live Copilot</span>
+              </div>
+
+              <div class="analysis-range-grid">
+                <label>Session Title
+                  <input type="text" id="liveSessionTitleInput" placeholder="Board review - July sync">
+                </label>
+                <label>Speaker Label
+                  <input type="text" id="liveSpeakerInput" placeholder="Defaults to your name">
+                </label>
+              </div>
+
+              <div class="button-row">
+                <button id="liveStartBtn" class="primary-btn">Start Live Session</button>
+                <button id="liveListenBtn" class="ghost-btn">Start Listening</button>
+                <button id="liveStopListenBtn" class="ghost-btn">Stop Listening</button>
+                <button id="liveScreenBtn" class="ghost-btn">Start Screen Capture</button>
+                <button id="liveStopScreenBtn" class="ghost-btn">Stop Screen Capture</button>
+                <button id="liveRefreshBtn" class="ghost-btn">Refresh Live State</button>
+                <button id="liveOpenPopupBtn" class="ghost-btn">Open Floating Popup</button>
+                <button id="liveFinalizeBtn" class="ghost-btn">Finalize Session</button>
+              </div>
+              <div id="liveStatus" class="upload-status">No live session started.</div>
+              <p class="muted range-note">Browser apps cannot draw a true system-wide overlay on top of every tab, so BoardSight opens a dedicated pop-out copilot window instead. You can keep that small window visible while sharing another tab.</p>
+
+              <div class="workflow-grid live-grid">
+                <div class="panel nested property-card">
+                  <h4>Manual Live Update</h4>
+                  <label>Add transcript or notes
+                    <textarea id="liveNoteInput" rows="7" placeholder="Paste transcript snippets, clerk notes, or spoken updates here..."></textarea>
+                  </label>
+                  <div class="button-row">
+                    <button id="liveAddNoteBtn" class="primary-btn">Add Update</button>
+                  </div>
+                  <div id="liveQuickSummary" class="speaker-row">
+                    <span>Session Summary</span>
+                    <strong>Awaiting transcript</strong>
+                  </div>
+                </div>
+
+                <div class="panel nested">
+                  <h4>Live Transcript Feed</h4>
+                  <div id="liveTranscriptList" class="transcript-list">
+                    <div class="empty-state">Start a live session and add updates to see the running transcript.</div>
+                  </div>
+                </div>
+
+                <div class="panel nested property-card">
+                  <h4>Live Copilot</h4>
+                  <div class="button-row live-quick-actions">
+                    <button id="liveAskSummaryBtn" class="ghost-btn">What happened so far?</button>
+                    <button id="liveAskDecisionsBtn" class="ghost-btn">Decisions</button>
+                    <button id="liveAskActionsBtn" class="ghost-btn">Action items</button>
+                    <button id="liveAskBlockersBtn" class="ghost-btn">Blockers</button>
+                  </div>
+                  <label>Ask about this meeting
+                    <textarea id="liveCopilotQuestionInput" rows="6" placeholder="I joined 10 minutes late. What was discussed before I joined?"></textarea>
+                  </label>
+                  <div class="button-row">
+                    <button id="liveAskBtn" class="primary-btn">Ask Copilot</button>
+                  </div>
+                  <div id="liveCopilotMeta" class="muted">Copilot is ready when a live session is active.</div>
+                  <div id="liveCopilotAnswer" class="trace-card">
+                    <div class="empty-state">BoardSight will answer from the live transcript accumulated so far.</div>
+                  </div>
+                </div>
               </div>
             </article>
           </section>
@@ -290,9 +376,10 @@
     <div class="processing-card panel">
       <div class="loader-ring"></div>
       <strong>Analyzing meeting</strong>
-      <span>Running speech, vision, decision, and workflow models.</span>
+      <span>Building transcript-grounded meeting intelligence and reports.</span>
     </div>
   </div>
+  <button id="floatingLiveLauncher" class="floating-live-launcher hidden" type="button">Open Live Copilot</button>
   <script src="/app.js"></script>
 </body>
 </html>

@@ -36,6 +36,7 @@ public final class ApiHandlers {
         server.createContext("/api/meeting", new MeetingDetailHandler(repository));
         server.createContext("/api/reports", new ReportHandler(repository));
         server.createContext("/api/analyze", new AnalyzeHandler(projectRoot, repository));
+        server.createContext("/api/live", new LiveHandler());
         server.createContext("/", new StaticHandler());
     }
 
@@ -69,6 +70,63 @@ public final class ApiHandlers {
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
                 throw new IOException("Authentication request was interrupted.", exception);
+            }
+            HttpUtils.sendBytes(exchange, response.statusCode(), response.body(), "application/json; charset=utf-8");
+        }
+    }
+
+    private static final class LiveHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            String aiServiceUrl = aiServiceUrl();
+            if (aiServiceUrl == null) {
+                HttpUtils.sendJson(exchange, 503, "{\"error\":\"Live copilot requires the AI service to be connected.\"}");
+                return;
+            }
+
+            String path = exchange.getRequestURI().getPath();
+            String method = exchange.getRequestMethod().toUpperCase();
+            String targetUrl;
+
+            if ("/api/live/start".equals(path) && "POST".equals(method)) {
+                targetUrl = aiServiceUrl + "/api/v1/live/start";
+            } else if ("/api/live/active".equals(path) && "GET".equals(method)) {
+                targetUrl = aiServiceUrl + "/api/v1/live/active";
+            } else {
+                String[] parts = path.split("/");
+                if (parts.length < 4) {
+                    HttpUtils.sendJson(exchange, 400, "{\"error\":\"Invalid live session route.\"}");
+                    return;
+                }
+                String sessionId = parts[3];
+                if (parts.length == 4 && "GET".equals(method)) {
+                    targetUrl = aiServiceUrl + "/api/v1/live/" + URLEncoder.encode(sessionId, StandardCharsets.UTF_8);
+                } else if (parts.length == 5 && "POST".equals(method)) {
+                    String action = parts[4];
+                    if (!action.equals("events") && !action.equals("copilot") && !action.equals("finalize")) {
+                        HttpUtils.sendJson(exchange, 400, "{\"error\":\"Unsupported live session action.\"}");
+                        return;
+                    }
+                    targetUrl = aiServiceUrl + "/api/v1/live/"
+                        + URLEncoder.encode(sessionId, StandardCharsets.UTF_8)
+                        + "/" + URLEncoder.encode(action, StandardCharsets.UTF_8);
+                } else {
+                    HttpUtils.sendJson(exchange, 405, "{\"error\":\"Method not allowed.\"}");
+                    return;
+                }
+            }
+
+            HttpResponse<byte[]> response;
+            try {
+                response = sendJsonRequest(
+                    targetUrl,
+                    method,
+                    exchange.getRequestBody().readAllBytes(),
+                    exchange.getRequestHeaders().getFirst("Authorization")
+                );
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new IOException("Live request to AI service was interrupted.", exception);
             }
             HttpUtils.sendBytes(exchange, response.statusCode(), response.body(), "application/json; charset=utf-8");
         }
@@ -219,7 +277,8 @@ public final class ApiHandlers {
                 Map<String, String> query = HttpUtils.parseQuery(exchange.getRequestURI().getRawQuery());
                 Double startSeconds = parseOptionalDouble(query.get("start_seconds"));
                 Double endSeconds = parseOptionalDouble(query.get("end_seconds"));
-                PipelineRunResult result = runner.run(uploadPath, outputDir, authorizationHeader, startSeconds, endSeconds);
+                String analysisProfile = query.get("analysis_profile");
+                PipelineRunResult result = runner.run(uploadPath, outputDir, authorizationHeader, startSeconds, endSeconds, analysisProfile);
                 String payload = Files.readString(result.resultJsonPath(), StandardCharsets.UTF_8);
                 repository.refresh();
                 HttpUtils.sendJson(exchange, 200, payload);

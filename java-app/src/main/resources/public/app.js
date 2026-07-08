@@ -8,6 +8,7 @@ const state = {
   meetings: [],
   currentMeetingId: null,
   currentMeeting: null,
+  liveSession: null,
   sessionHasProcessed: false,
   authMode: "signin",
   currentUser: DEFAULT_USER,
@@ -15,7 +16,11 @@ const state = {
   theme: localStorage.getItem("boardsight-theme") || "light"
 };
 
+const urlParams = new URLSearchParams(window.location.search);
+const isLiveCopilotPopup = urlParams.get("popup") === "live-copilot";
+
 document.body.dataset.theme = state.theme;
+document.body.classList.toggle("popup-live-copilot", isLiveCopilotPopup);
 
 const loginView = document.getElementById("loginView");
 const appView = document.getElementById("appView");
@@ -56,6 +61,41 @@ const exportTraceBtn = document.getElementById("exportTraceBtn");
 const processingOverlay = document.getElementById("processingOverlay");
 const analysisStartInput = document.getElementById("analysisStartInput");
 const analysisEndInput = document.getElementById("analysisEndInput");
+const analysisProfileInput = document.getElementById("analysisProfileInput");
+const openLivePopupBtn = document.getElementById("openLivePopupBtn");
+const liveSessionTitleInput = document.getElementById("liveSessionTitleInput");
+const liveSpeakerInput = document.getElementById("liveSpeakerInput");
+const liveStartBtn = document.getElementById("liveStartBtn");
+const liveListenBtn = document.getElementById("liveListenBtn");
+const liveStopListenBtn = document.getElementById("liveStopListenBtn");
+const liveScreenBtn = document.getElementById("liveScreenBtn");
+const liveStopScreenBtn = document.getElementById("liveStopScreenBtn");
+const liveRefreshBtn = document.getElementById("liveRefreshBtn");
+const liveOpenPopupBtn = document.getElementById("liveOpenPopupBtn");
+const liveFinalizeBtn = document.getElementById("liveFinalizeBtn");
+const liveStatus = document.getElementById("liveStatus");
+const liveNoteInput = document.getElementById("liveNoteInput");
+const liveAddNoteBtn = document.getElementById("liveAddNoteBtn");
+const liveTranscriptList = document.getElementById("liveTranscriptList");
+const liveQuickSummary = document.getElementById("liveQuickSummary");
+const liveCopilotQuestionInput = document.getElementById("liveCopilotQuestionInput");
+const liveAskBtn = document.getElementById("liveAskBtn");
+const liveCopilotMeta = document.getElementById("liveCopilotMeta");
+const liveCopilotAnswer = document.getElementById("liveCopilotAnswer");
+const liveAskSummaryBtn = document.getElementById("liveAskSummaryBtn");
+const liveAskDecisionsBtn = document.getElementById("liveAskDecisionsBtn");
+const liveAskActionsBtn = document.getElementById("liveAskActionsBtn");
+const liveAskBlockersBtn = document.getElementById("liveAskBlockersBtn");
+const floatingLiveLauncher = document.getElementById("floatingLiveLauncher");
+
+let liveRefreshHandle = null;
+let liveRecognition = null;
+let liveRecognitionActive = false;
+let livePopupHandle = null;
+let liveScreenStream = null;
+let liveScreenCaptureHandle = null;
+let liveScreenVideo = null;
+let liveScreenCanvas = null;
 
 themeToggle.addEventListener("click", () => {
   state.theme = state.theme === "light" ? "dark" : "light";
@@ -132,10 +172,58 @@ exportPdfBtn.addEventListener("click", () => openReport("structured_report.pdf")
 exportDocxBtn.addEventListener("click", () => openReport("structured_report.docx"));
 exportXlsxBtn.addEventListener("click", () => openReport("structured_report.xlsx"));
 exportTraceBtn.addEventListener("click", () => openReport("structured_report.pdf"));
+openLivePopupBtn?.addEventListener("click", openLiveCopilotPopup);
+liveStartBtn?.addEventListener("click", startLiveSession);
+liveRefreshBtn?.addEventListener("click", () => refreshLiveSession());
+liveOpenPopupBtn?.addEventListener("click", openLiveCopilotPopup);
+liveFinalizeBtn?.addEventListener("click", finalizeLiveSession);
+liveAddNoteBtn?.addEventListener("click", submitLiveNote);
+liveAskBtn?.addEventListener("click", submitLiveQuestion);
+liveListenBtn?.addEventListener("click", startLiveListening);
+liveStopListenBtn?.addEventListener("click", stopLiveListening);
+liveScreenBtn?.addEventListener("click", startLiveScreenCapture);
+liveStopScreenBtn?.addEventListener("click", stopLiveScreenCapture);
+liveAskSummaryBtn?.addEventListener("click", () => askLiveShortcut("What happened so far?"));
+liveAskDecisionsBtn?.addEventListener("click", () => askLiveShortcut("What decisions have been made so far?"));
+liveAskActionsBtn?.addEventListener("click", () => askLiveShortcut("What action items should I know right now?"));
+liveAskBlockersBtn?.addEventListener("click", () => askLiveShortcut("What blockers or risks have been raised so far?"));
+floatingLiveLauncher?.addEventListener("click", openLiveCopilotPopup);
 
 syncAuthMode();
 updateUserChip();
+renderLiveSession();
 bootstrapSession();
+
+function openLiveCopilotPopup() {
+  const popupUrl = new URL(window.location.href);
+  popupUrl.searchParams.set("popup", "live-copilot");
+  const popupFeatures = [
+    "width=480",
+    "height=760",
+    "resizable=yes",
+    "scrollbars=yes"
+  ].join(",");
+  livePopupHandle = window.open(popupUrl.toString(), "boardsight-live-copilot", popupFeatures);
+  if (livePopupHandle) {
+    livePopupHandle.focus();
+  } else {
+    setLiveStatus("Popup blocked by the browser. Allow popups for BoardSight to keep the live copilot visible.");
+  }
+}
+
+function activateLivePopupMode() {
+  setView("live");
+  document.querySelectorAll(".content-view").forEach((view) => view.classList.add("hidden"));
+  document.getElementById("liveView")?.classList.remove("hidden");
+}
+
+function syncFloatingLauncher() {
+  if (!floatingLiveLauncher) {
+    return;
+  }
+  const hasActiveSession = state.liveSession?.session?.status === "active";
+  floatingLiveLauncher.classList.toggle("hidden", !hasActiveSession || isLiveCopilotPopup);
+}
 
 async function bootstrapSession() {
   if (!state.authToken) {
@@ -151,7 +239,11 @@ async function bootstrapSession() {
     updateUserChip();
     loginView.classList.add("hidden");
     appView.classList.remove("hidden");
+    if (isLiveCopilotPopup) {
+      activateLivePopupMode();
+    }
     await loadMeetings();
+    await loadActiveLiveSession();
   } catch {
     clearSession();
   }
@@ -271,26 +363,36 @@ async function submitLogin(username, password) {
   authStatus.textContent = "";
   loginView.classList.add("hidden");
   appView.classList.remove("hidden");
+  if (isLiveCopilotPopup) {
+    activateLivePopupMode();
+  }
   await loadMeetings();
+  await loadActiveLiveSession();
 }
 
 function clearSession() {
   state.authToken = "";
   state.currentMeeting = null;
   state.currentMeetingId = null;
+  state.liveSession = null;
   state.meetings = [];
   state.sessionHasProcessed = false;
   state.currentUser = DEFAULT_USER;
   localStorage.removeItem("boardsight-token");
+  stopLiveListening();
+  stopLiveScreenCapture();
+  stopLivePolling();
   updateUserChip();
   renderEmptyDashboard();
   renderMeetingList();
   renderMeetingDetail();
+  renderLiveSession();
   renderCvFeaturePanel();
   renderTrace();
   renderWorkflow();
   loginView.classList.remove("hidden");
   appView.classList.add("hidden");
+  syncFloatingLauncher();
 }
 
 function normalizeUser(payload) {
@@ -321,6 +423,7 @@ async function loadMeetings() {
     state.sessionHasProcessed = state.meetings.length > 0;
     updateDashboard();
     renderMeetingList();
+    renderLiveSession();
     if (state.currentMeetingId) {
       await loadMeetingDetail(state.currentMeetingId);
     } else {
@@ -808,6 +911,452 @@ function renderWorkflow() {
   `;
 }
 
+async function loadActiveLiveSession() {
+  try {
+    const response = await apiFetch("/api/live/active");
+    if (!response.ok) {
+      renderLiveSession();
+      return;
+    }
+    const payload = await response.json();
+    state.liveSession = payload?.session ? payload : null;
+    renderLiveSession();
+    if (state.liveSession?.session?.status === "active") {
+      ensureLivePolling();
+    } else {
+      stopLivePolling();
+    }
+  } catch (error) {
+    if (error?.status !== 401) {
+      renderLiveSession();
+    }
+  }
+}
+
+async function refreshLiveSession() {
+  if (!state.liveSession?.session?.id) {
+    await loadActiveLiveSession();
+    return;
+  }
+  try {
+    const response = await apiFetch(`/api/live/${encodeURIComponent(state.liveSession.session.id)}`);
+    if (!response.ok) {
+      return;
+    }
+    state.liveSession = await response.json();
+    renderLiveSession();
+  } catch (error) {
+    if (error?.status !== 401) {
+      setLiveStatus("Unable to refresh the live session right now.");
+    }
+  }
+}
+
+function renderLiveSession() {
+  if (!liveTranscriptList || !liveQuickSummary || !liveCopilotAnswer) {
+    return;
+  }
+
+  const livePayload = state.liveSession;
+  if (!livePayload?.session) {
+    liveTranscriptList.innerHTML = `<div class="empty-state">Start a live session and add updates to see the running transcript.</div>`;
+    liveQuickSummary.innerHTML = `<span>Session Summary</span><strong>Awaiting transcript</strong>`;
+    liveCopilotMeta.textContent = "Copilot is ready when a live session is active.";
+    liveCopilotAnswer.innerHTML = `<div class="empty-state">BoardSight will answer from the live transcript accumulated so far.</div>`;
+    setLiveStatus("No live session started.");
+    syncFloatingLauncher();
+    return;
+  }
+
+  const transcriptSegments = livePayload.transcript?.segments || [];
+  const liveVisualCues = livePayload.live_visual_cues || [];
+  liveTranscriptList.innerHTML = transcriptSegments.length === 0
+    ? `<div class="empty-state">Listening is active, but no transcript chunks have been stored yet.</div>`
+    : transcriptSegments.slice(-20).map((segment) => `
+      <div class="transcript-row">
+        <strong>${segment.timestamp}</strong>
+        <span>${escapeHtml(segment.speaker)}</span>
+        <span>${escapeHtml(segment.text)}</span>
+      </div>
+    `).join("");
+
+  const summary = String(livePayload.copilot_context?.summary || "").trim();
+  liveQuickSummary.innerHTML = `
+    <span>Session Summary</span>
+    <strong>${escapeHtml(summary || "Live summary will appear as the transcript grows.")}</strong>
+  `;
+  liveCopilotMeta.textContent = `${livePayload.session.event_count || 0} updates captured | ${livePayload.session.speaker_count || 0} speakers tracked | ${liveVisualCues.length || 0} visual cues | Source: ${livePayload.copilot_context?.source || "live-heuristic"}`;
+  setLiveStatus(
+    livePayload.session.status === "active"
+      ? `Live session active: ${livePayload.session.title}`
+      : `Live session finalized: ${livePayload.session.title}`
+  );
+  syncFloatingLauncher();
+}
+
+function ensureLivePolling() {
+  if (liveRefreshHandle !== null) {
+    return;
+  }
+  liveRefreshHandle = window.setInterval(() => {
+    if (state.liveSession?.session?.status === "active") {
+      refreshLiveSession();
+    }
+  }, 5000);
+}
+
+function stopLivePolling() {
+  if (liveRefreshHandle !== null) {
+    window.clearInterval(liveRefreshHandle);
+    liveRefreshHandle = null;
+  }
+}
+
+function setLiveStatus(message) {
+  if (liveStatus) {
+    liveStatus.textContent = message;
+  }
+}
+
+async function startLiveSession() {
+  try {
+    const title = (liveSessionTitleInput?.value || "").trim() || `Live Session ${new Date().toLocaleTimeString()}`;
+    const response = await apiFetch("/api/live/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title })
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      setLiveStatus(payload.error || payload.detail || "Unable to start a live session.");
+      return;
+    }
+    const payload = await response.json();
+    state.liveSession = { session: payload.session, transcript: { segments: [], full_text: "" }, copilot_context: { source: "pending" } };
+    renderLiveSession();
+    ensureLivePolling();
+    await refreshLiveSession();
+  } catch (error) {
+    if (error?.status !== 401) {
+      setLiveStatus("Unable to start a live session right now.");
+    }
+  }
+}
+
+function currentLiveSpeaker() {
+  return (liveSpeakerInput?.value || "").trim() || state.currentUser.displayName || "Participant";
+}
+
+function currentLiveElapsedSeconds() {
+  const startedAt = state.liveSession?.session?.started_at;
+  const startedAtMs = startedAt ? Date.parse(startedAt.replace(" ", "T")) : Date.now();
+  if (!Number.isFinite(startedAtMs)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000));
+}
+
+async function appendLiveUpdate(text) {
+  if (!state.liveSession?.session?.id) {
+    setLiveStatus("Start a live session first.");
+    return false;
+  }
+  const normalizedText = String(text || "").trim();
+  if (!normalizedText) {
+    return false;
+  }
+  const startSeconds = currentLiveElapsedSeconds();
+  const endSeconds = startSeconds + Math.max(4, Math.ceil(normalizedText.split(/\s+/).length / 2));
+  const response = await apiFetch(`/api/live/${encodeURIComponent(state.liveSession.session.id)}/events`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      speaker: currentLiveSpeaker(),
+      text: normalizedText,
+      start_seconds: startSeconds,
+      end_seconds: endSeconds
+    })
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    setLiveStatus(payload.error || payload.detail || "Unable to store the live update.");
+    return false;
+  }
+  state.liveSession = await response.json();
+  renderLiveSession();
+  return true;
+}
+
+async function submitLiveNote() {
+  try {
+    const success = await appendLiveUpdate(liveNoteInput?.value || "");
+    if (success && liveNoteInput) {
+      liveNoteInput.value = "";
+    }
+  } catch (error) {
+    if (error?.status !== 401) {
+      setLiveStatus("Unable to add the live note right now.");
+    }
+  }
+}
+
+async function submitLiveQuestion() {
+  if (!state.liveSession?.session?.id) {
+    setLiveStatus("Start a live session before asking the copilot.");
+    return;
+  }
+  const question = (liveCopilotQuestionInput?.value || "").trim();
+  if (!question) {
+    setLiveStatus("Enter a question for the live copilot.");
+    return;
+  }
+  liveCopilotMeta.textContent = "BoardSight is thinking over the live transcript...";
+  try {
+    const response = await apiFetch(`/api/live/${encodeURIComponent(state.liveSession.session.id)}/copilot`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question })
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      setLiveStatus(payload.error || payload.detail || "Live copilot could not answer right now.");
+      return;
+    }
+    const payload = await response.json();
+    liveCopilotMeta.textContent = `Answer source: ${payload.source} | ${payload.event_count || 0} updates considered`;
+    liveCopilotAnswer.textContent = payload.answer || "No answer returned.";
+  } catch (error) {
+    if (error?.status !== 401) {
+      setLiveStatus("Live copilot is unavailable right now.");
+    }
+  }
+}
+
+function askLiveShortcut(question) {
+  if (liveCopilotQuestionInput) {
+    liveCopilotQuestionInput.value = question;
+  }
+  submitLiveQuestion();
+}
+
+async function finalizeLiveSession() {
+  if (!state.liveSession?.session?.id) {
+    setLiveStatus("There is no live session to finalize.");
+    return;
+  }
+  try {
+    const response = await apiFetch(`/api/live/${encodeURIComponent(state.liveSession.session.id)}/finalize`, {
+      method: "POST"
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      setLiveStatus(payload.error || payload.detail || "Unable to finalize the live session.");
+      return;
+    }
+    stopLiveListening();
+    stopLiveScreenCapture();
+    stopLivePolling();
+    await refreshLiveSession();
+  } catch (error) {
+    if (error?.status !== 401) {
+      setLiveStatus("Unable to finalize the live session right now.");
+    }
+  }
+}
+
+function ensureSpeechRecognition() {
+  const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognitionCtor) {
+    return null;
+  }
+  if (liveRecognition) {
+    return liveRecognition;
+  }
+  liveRecognition = new SpeechRecognitionCtor();
+  liveRecognition.continuous = true;
+  liveRecognition.interimResults = true;
+  liveRecognition.lang = "en-US";
+  liveRecognition.onresult = async (event) => {
+    let interimText = "";
+    for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      const result = event.results[index];
+      const transcript = String(result[0]?.transcript || "").trim();
+      if (!transcript) {
+        continue;
+      }
+      if (result.isFinal) {
+        await appendLiveUpdate(transcript);
+      } else {
+        interimText += `${transcript} `;
+      }
+    }
+    if (interimText.trim()) {
+      setLiveStatus(`Listening... ${interimText.trim()}`);
+    }
+  };
+  liveRecognition.onerror = (event) => {
+    setLiveStatus(`Speech capture issue: ${event.error || "unknown error"}`);
+  };
+  liveRecognition.onend = () => {
+    if (liveRecognitionActive) {
+      try {
+        liveRecognition.start();
+      } catch {
+        liveRecognitionActive = false;
+      }
+    }
+  };
+  return liveRecognition;
+}
+
+function startLiveListening() {
+  if (!state.liveSession?.session?.id) {
+    setLiveStatus("Start a live session before enabling speech capture.");
+    return;
+  }
+  const recognition = ensureSpeechRecognition();
+  if (!recognition) {
+    setLiveStatus("This browser does not support built-in speech recognition. You can still paste live transcript updates manually.");
+    return;
+  }
+  liveRecognitionActive = true;
+  try {
+    recognition.start();
+    setLiveStatus("Speech capture started. Final transcript chunks will flow into the live copilot.");
+  } catch {
+    setLiveStatus("Speech capture is already running.");
+  }
+}
+
+function stopLiveListening() {
+  liveRecognitionActive = false;
+  if (liveRecognition) {
+    try {
+      liveRecognition.stop();
+    } catch {
+      // no-op
+    }
+  }
+}
+
+function ensureLiveScreenElements() {
+  if (!liveScreenVideo) {
+    liveScreenVideo = document.createElement("video");
+    liveScreenVideo.muted = true;
+    liveScreenVideo.playsInline = true;
+    liveScreenVideo.style.position = "fixed";
+    liveScreenVideo.style.opacity = "0";
+    liveScreenVideo.style.pointerEvents = "none";
+    liveScreenVideo.style.width = "1px";
+    liveScreenVideo.style.height = "1px";
+    document.body.appendChild(liveScreenVideo);
+  }
+  if (!liveScreenCanvas) {
+    liveScreenCanvas = document.createElement("canvas");
+  }
+}
+
+async function uploadLiveScreenSample() {
+  if (!state.liveSession?.session?.id || !liveScreenVideo || !liveScreenCanvas) {
+    return;
+  }
+  const width = liveScreenVideo.videoWidth;
+  const height = liveScreenVideo.videoHeight;
+  if (!width || !height) {
+    return;
+  }
+  const maxWidth = 960;
+  const scale = Math.min(1, maxWidth / width);
+  liveScreenCanvas.width = Math.max(1, Math.round(width * scale));
+  liveScreenCanvas.height = Math.max(1, Math.round(height * scale));
+  const context = liveScreenCanvas.getContext("2d");
+  if (!context) {
+    return;
+  }
+  context.drawImage(liveScreenVideo, 0, 0, liveScreenCanvas.width, liveScreenCanvas.height);
+  const imageBase64 = liveScreenCanvas.toDataURL("image/jpeg", 0.82);
+  try {
+    const response = await apiFetch(`/api/live/${encodeURIComponent(state.liveSession.session.id)}/visual`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        image_base64: imageBase64,
+        timestamp_seconds: currentLiveElapsedSeconds()
+      })
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      setLiveStatus(payload.error || payload.detail || "Unable to analyze live screen sample.");
+      return;
+    }
+    state.liveSession = await response.json();
+    renderLiveSession();
+  } catch (error) {
+    if (error?.status !== 401) {
+      setLiveStatus("Live screen analysis is unavailable right now.");
+    }
+  }
+}
+
+async function startLiveScreenCapture() {
+  if (!state.liveSession?.session?.id) {
+    setLiveStatus("Start a live session before enabling screen capture.");
+    return;
+  }
+  if (!navigator.mediaDevices?.getDisplayMedia) {
+    setLiveStatus("This browser does not support screen capture.");
+    return;
+  }
+  if (liveScreenStream) {
+    setLiveStatus("Screen capture is already running.");
+    return;
+  }
+  try {
+    ensureLiveScreenElements();
+    liveScreenStream = await navigator.mediaDevices.getDisplayMedia({
+      video: { frameRate: { ideal: 1, max: 2 } },
+      audio: false
+    });
+    liveScreenVideo.srcObject = liveScreenStream;
+    await liveScreenVideo.play();
+    const [track] = liveScreenStream.getVideoTracks();
+    if (track) {
+      track.onended = () => {
+        stopLiveScreenCapture();
+      };
+    }
+    await uploadLiveScreenSample();
+    liveScreenCaptureHandle = window.setInterval(() => {
+      uploadLiveScreenSample();
+    }, 15000);
+    setLiveStatus("Screen capture started. BoardSight will sample shared visuals every 15 seconds.");
+  } catch (error) {
+    stopLiveScreenCapture();
+    setLiveStatus("Screen capture was cancelled or could not be started.");
+  }
+}
+
+function stopLiveScreenCapture() {
+  if (liveScreenCaptureHandle !== null) {
+    window.clearInterval(liveScreenCaptureHandle);
+    liveScreenCaptureHandle = null;
+  }
+  if (liveScreenStream) {
+    liveScreenStream.getTracks().forEach((track) => {
+      try {
+        track.stop();
+      } catch {
+        // no-op
+      }
+    });
+    liveScreenStream = null;
+  }
+  if (liveScreenVideo) {
+    liveScreenVideo.pause();
+    liveScreenVideo.srcObject = null;
+  }
+}
+
 async function handleUpload(event) {
   const file = event.target.files?.[0];
   if (!file) return;
@@ -839,10 +1388,13 @@ async function handleUpload(event) {
     return;
   }
 
-  setProcessingState(true, `Uploading ${file.name} and running BoardSight analysis...`);
+  const analysisProfile = analysisProfileInput?.value || "production";
+  const profileLabel = "production analysis";
+  setProcessingState(true, `Uploading ${file.name} and running ${profileLabel}...`);
   const formData = new FormData();
   formData.append("file", file);
   const requestUrl = new URL("/api/analyze", window.location.origin);
+  requestUrl.searchParams.set("analysis_profile", analysisProfile);
   if (startSeconds !== null) {
     requestUrl.searchParams.set("start_seconds", String(startSeconds));
   }
@@ -866,7 +1418,7 @@ async function handleUpload(event) {
     const payload = await response.json();
     const derivedMeetingId = deriveMeetingId(payload);
     state.sessionHasProcessed = true;
-    uploadStatus.textContent = "Analysis complete. Loading meeting results...";
+    uploadStatus.textContent = `${capitalize(profileLabel)} complete. Loading meeting results...`;
     await loadMeetings();
 
     if (derivedMeetingId && /^\d+$/.test(derivedMeetingId)) {
@@ -875,7 +1427,7 @@ async function handleUpload(event) {
       await loadMeetingDetail(state.meetings[0].meetingId || state.meetings[0].id);
     }
 
-    uploadStatus.textContent = "Analysis complete.";
+    uploadStatus.textContent = `${capitalize(profileLabel)} complete.`;
     setView("meetings");
   } catch (error) {
     if (error?.status !== 401) {
@@ -904,6 +1456,9 @@ function deriveMeetingId(payload) {
 }
 
 function setView(viewName) {
+  if (isLiveCopilotPopup) {
+    viewName = "live";
+  }
   document.querySelectorAll(".nav-item").forEach((button) => button.classList.toggle("active", button.dataset.view === viewName));
   document.querySelectorAll(".content-view").forEach((view) => view.classList.add("hidden"));
   document.getElementById(`${viewName}View`).classList.remove("hidden");
@@ -1004,6 +1559,14 @@ function buildMeetingDetailRows(meeting) {
   });
 
   const analysisRange = formatAnalysisRange(meeting.metadata?.analysis_range);
+  const runtimeProfile = meeting.metadata?.performance_report?.runtime_profile;
+  if (runtimeProfile) {
+    rows.unshift({
+      left: "Analysis Profile",
+      middle: runtimeProfile,
+      right: meeting.metadata?.performance_report?.no_heuristics_policy || "Profile-specific runtime path"
+    });
+  }
   if (analysisRange) {
     rows.unshift({
       left: "Analysis Window",

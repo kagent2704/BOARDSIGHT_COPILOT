@@ -25,7 +25,7 @@ public final class PythonPipelineRunner {
     }
 
     public PipelineRunResult run(Path videoPath, Path outputDirectory, String authorizationHeader) throws IOException, InterruptedException {
-        return run(videoPath, outputDirectory, authorizationHeader, null, null);
+        return run(videoPath, outputDirectory, authorizationHeader, null, null, null);
     }
 
     public PipelineRunResult run(
@@ -33,7 +33,8 @@ public final class PythonPipelineRunner {
         Path outputDirectory,
         String authorizationHeader,
         Double startSeconds,
-        Double endSeconds
+        Double endSeconds,
+        String analysisProfile
     ) throws IOException, InterruptedException {
         if (!Files.exists(videoPath)) {
             throw new IOException("Video file does not exist: " + videoPath);
@@ -42,20 +43,21 @@ public final class PythonPipelineRunner {
         Files.createDirectories(outputDirectory);
         String aiServiceUrl = System.getenv("BOARDSIGHT_AI_URL");
         if (aiServiceUrl != null && !aiServiceUrl.isBlank()) {
-            return runRemote(videoPath, outputDirectory, aiServiceUrl, authorizationHeader, startSeconds, endSeconds);
+            return runRemote(videoPath, outputDirectory, aiServiceUrl, authorizationHeader, startSeconds, endSeconds, analysisProfile);
         }
-        return runLocal(videoPath, outputDirectory, startSeconds, endSeconds);
+        return runLocal(videoPath, outputDirectory, startSeconds, endSeconds, analysisProfile);
     }
 
     public PipelineRunResult run(Path videoPath, Path outputDirectory) throws IOException, InterruptedException {
-        return run(videoPath, outputDirectory, null, null, null);
+        return run(videoPath, outputDirectory, null, null, null, null);
     }
 
     private PipelineRunResult runLocal(
         Path videoPath,
         Path outputDirectory,
         Double startSeconds,
-        Double endSeconds
+        Double endSeconds,
+        String analysisProfile
     ) throws IOException, InterruptedException {
         Path cliPath = projectRoot.resolve("python-ai").resolve("boardsight_ai").resolve("cli.py");
         Path resultPath = outputDirectory.resolve("boardsight_result.json");
@@ -76,6 +78,10 @@ public final class PythonPipelineRunner {
         if (endSeconds != null) {
             command.add("--end-seconds");
             command.add(Double.toString(endSeconds));
+        }
+        if (analysisProfile != null && !analysisProfile.isBlank()) {
+            command.add("--analysis-profile");
+            command.add(analysisProfile);
         }
 
         ProcessBuilder builder = new ProcessBuilder(command);
@@ -104,7 +110,8 @@ public final class PythonPipelineRunner {
         String aiServiceUrl,
         String authorizationHeader,
         Double startSeconds,
-        Double endSeconds
+        Double endSeconds,
+        String analysisProfile
     ) throws IOException, InterruptedException {
         Path resultPath = outputDirectory.resolve("boardsight_result.json");
         String encodedOutputDir = URLEncoder.encode(outputDirectory.getFileName().toString(), StandardCharsets.UTF_8);
@@ -120,6 +127,10 @@ public final class PythonPipelineRunner {
         if (endSeconds != null) {
             requestBody.append(",\"end_seconds\":").append(endSeconds);
             querySuffix.append("&end_seconds=").append(URLEncoder.encode(Double.toString(endSeconds), StandardCharsets.UTF_8));
+        }
+        if (analysisProfile != null && !analysisProfile.isBlank()) {
+            requestBody.append(",\"analysis_profile\":\"").append(escapeJson(analysisProfile)).append("\"");
+            querySuffix.append("&analysis_profile=").append(URLEncoder.encode(analysisProfile, StandardCharsets.UTF_8));
         }
         requestBody.append("}");
 

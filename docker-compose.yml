@@ -10,7 +10,6 @@ services:
       PYTHONIOENCODING: UTF-8
       MPLBACKEND: Agg
       HF_HOME: /workspace/.cache/huggingface
-      DEEPFACE_HOME: /workspace/.cache/deepface
       HF_HUB_DISABLE_SYMLINKS_WARNING: "1"
       BOARDSIGHT_WARM_MODELS: "0"
     volumes:
