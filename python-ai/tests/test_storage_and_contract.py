@@ -73,3 +73,30 @@ def test_init_storage_migrates_legacy_live_session_schema(tmp_path: Path) -> Non
     assert rows
     assert rows[0]["title"] == "Legacy session"
     assert {"user_id", "username", "status", "transcript_text", "last_copilot_source", "last_copilot_answer"} <= migrated_columns
+
+
+def test_create_live_session_works_with_legacy_session_id_schema(tmp_path: Path) -> None:
+    db_path = tmp_path / "legacy-session-id.db"
+    execute(
+        db_path,
+        """
+        CREATE TABLE live_sessions (
+            session_id TEXT PRIMARY KEY,
+            user_id INTEGER,
+            username TEXT,
+            title TEXT,
+            status TEXT NOT NULL DEFAULT 'active',
+            transcript_json TEXT NOT NULL DEFAULT '[]',
+            state_json TEXT NOT NULL DEFAULT '{}',
+            final_result_json TEXT
+        )
+        """,
+    )
+
+    session_id = create_live_session(db_path, "Legacy key session", user_id=9, username="admin")
+    rows = list_live_sessions(db_path, user_id=9, status="active")
+
+    assert session_id > 0
+    assert rows
+    assert rows[0]["id"] == session_id
+    assert rows[0]["title"] == "Legacy key session"

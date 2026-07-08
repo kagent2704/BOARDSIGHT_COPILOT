@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from uuid import uuid4
 
 from boardsight_ai.database import execute, fetchall, fetchone, insert_and_return_id, is_postgres, table_columns
 from boardsight_ai.models import PipelineResult
@@ -101,6 +102,16 @@ def init_storage(database_path: Path) -> None:
     )
 
     live_session_columns = table_columns(database_path, "live_sessions")
+    if "id" not in live_session_columns:
+        if is_postgres(database_path):
+            execute(database_path, "ALTER TABLE live_sessions ADD COLUMN id BIGINT")
+            execute(database_path, "CREATE SEQUENCE IF NOT EXISTS live_sessions_id_seq")
+            execute(database_path, "ALTER TABLE live_sessions ALTER COLUMN id SET DEFAULT nextval('live_sessions_id_seq')")
+            execute(database_path, "UPDATE live_sessions SET id = nextval('live_sessions_id_seq') WHERE id IS NULL")
+        else:
+            execute(database_path, "ALTER TABLE live_sessions ADD COLUMN id INTEGER")
+            execute(database_path, "UPDATE live_sessions SET id = rowid WHERE id IS NULL")
+        live_session_columns = table_columns(database_path, "live_sessions")
     required_live_session_columns: dict[str, str] = {
         "user_id": "BIGINT" if is_postgres(database_path) else "INTEGER",
         "username": "TEXT",
@@ -348,10 +359,23 @@ def get_meeting_result(database_path: Path, meeting_id: int, user_id: int | None
 
 def create_live_session(database_path: Path, title: str, user_id: int | None = None, username: str | None = None) -> int:
     init_storage(database_path)
+    live_session_columns = table_columns(database_path, "live_sessions")
+    params: dict[str, object] = {"user_id": user_id, "username": username, "title": title}
+    insert_columns = ["user_id", "username", "title"]
+    insert_values = [":user_id", ":username", ":title"]
+    if "session_id" in live_session_columns:
+        params["session_id"] = f"live-{uuid4().hex}"
+        insert_columns.insert(0, "session_id")
+        insert_values.insert(0, ":session_id")
+        if not is_postgres(database_path):
+            next_id_row = fetchone(database_path, "SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM live_sessions")
+            params["id"] = int(next_id_row["next_id"]) if next_id_row and next_id_row.get("next_id") is not None else 1
+            insert_columns.insert(0, "id")
+            insert_values.insert(0, ":id")
     return insert_and_return_id(
         database_path,
-        "INSERT INTO live_sessions (user_id, username, title) VALUES (:user_id, :username, :title)",
-        {"user_id": user_id, "username": username, "title": title},
+        f"INSERT INTO live_sessions ({', '.join(insert_columns)}) VALUES ({', '.join(insert_values)})",
+        params,
     )
 
 
