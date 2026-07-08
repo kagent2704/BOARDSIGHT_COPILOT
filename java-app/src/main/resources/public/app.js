@@ -1236,7 +1236,7 @@ async function runGitLabAssignmentRequest(mode) {
     if (isSync && state.liveSession?.gitlabApprovalId) {
       requestPayload.approval_id = state.liveSession.gitlabApprovalId;
     }
-    const response = await apiFetch(`/api/live/${encodeURIComponent(state.liveSession.session.id)}/gitlab/${isSync ? "sync" : "preview"}`, {
+    const response = await apiFetch(`/api/v1/live/${encodeURIComponent(state.liveSession.session.id)}/gitlab/${isSync ? "sync" : "preview"}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(requestPayload),
