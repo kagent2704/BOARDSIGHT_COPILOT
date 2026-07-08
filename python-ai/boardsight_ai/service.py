@@ -283,6 +283,20 @@ def meeting_detail(meeting_id: int, request: Request) -> dict:
     return payload
 
 
+@app.post("/api/v1/meetings/{meeting_id}/gitlab/preview")
+async def meeting_gitlab_preview(meeting_id: int, request: Request, payload: dict | None = None) -> dict:
+    user = _require_session_user(request)
+    request_payload = await _collect_request_payload(request, payload)
+    return _create_meeting_gitlab_preview(meeting_id, user, request_payload)
+
+
+@app.post("/api/v1/meetings/{meeting_id}/gitlab/sync")
+async def meeting_gitlab_sync(meeting_id: int, request: Request, payload: dict | None = None) -> dict:
+    user = _require_session_user(request)
+    request_payload = await _collect_request_payload(request, payload)
+    return _sync_meeting_gitlab_preview(meeting_id, user, request_payload)
+
+
 @app.get("/api/v1/meetings/{meeting_id}/reports/{file_name}")
 def meeting_report(meeting_id: int, file_name: str, request: Request):
     user = _require_session_user(request)
@@ -310,6 +324,15 @@ def _meeting_title_from_payload(source_kind: str, source_id: str, payload: dict[
     title = str(session.get("title") or "").strip()
     if title:
         return title
+    metadata = payload.get("metadata") or {}
+    for candidate in (
+        metadata.get("run_name"),
+        metadata.get("title"),
+        payload.get("title"),
+    ):
+        resolved = str(candidate or "").strip()
+        if resolved:
+            return resolved
     return f"{source_kind.replace('-', ' ').title()} {source_id}"
 
 
@@ -343,27 +366,27 @@ def _gitlab_connection_overrides(request_payload: dict[str, Any]) -> dict[str, A
     return overrides
 
 
-def _create_gitlab_preview(
-    session_id: int,
+def _create_gitlab_preview_for_payload(
+    *,
+    source_kind: str,
+    source_id: str,
+    source_payload: dict[str, Any],
     user: dict[str, Any],
     request_payload: dict[str, Any],
 ) -> dict[str, Any]:
-    session_row = _resolve_owned_live_session(session_id, user)
-    event_rows = get_live_session_events(MEETING_DB_PATH, session_id)
-    visual_rows = get_live_session_visual_events(MEETING_DB_PATH, session_id)
     config = default_config()
-    live_payload = build_live_session_payload(session_row, event_rows, config, visual_rows=visual_rows)
+    meeting_title = _meeting_title_from_payload(source_kind, source_id, source_payload)
     plan = build_gitlab_execution_plan(
-        normalize_gitlab_plan_source(live_payload),
-        source_kind="live-session",
-        source_id=str(session_id),
-        meeting_title=_meeting_title_from_payload("live-session", str(session_id), live_payload),
+        normalize_gitlab_plan_source(source_payload),
+        source_kind=source_kind,
+        source_id=source_id,
+        meeting_title=meeting_title,
         assignee_map=_build_assignee_map(request_payload.get("assignee_map")),
     )
     execution_run = create_agent_execution_run(
         MEETING_DB_PATH,
-        source_kind="live-session",
-        source_id=str(session_id),
+        source_kind=source_kind,
+        source_id=source_id,
         meeting_title=plan["meeting_title"],
         created_by_user_id=int(user["user_id"]),
         plan=plan,
@@ -371,8 +394,8 @@ def _create_gitlab_preview(
     connection_overrides = _gitlab_connection_overrides(request_payload)
     save_gitlab_sync(
         MEETING_DB_PATH,
-        source_kind="live-session",
-        source_id=str(session_id),
+        source_kind=source_kind,
+        source_id=source_id,
         project_ref=str(connection_overrides.get("project_id") or config.gitlab_project_id or ""),
         dry_run=True,
         plan=plan,
@@ -391,15 +414,63 @@ def _create_gitlab_preview(
     }
 
 
-def _sync_gitlab_preview(
+def _create_gitlab_preview(
     session_id: int,
     user: dict[str, Any],
     request_payload: dict[str, Any],
 ) -> dict[str, Any]:
+    session_row = _resolve_owned_live_session(session_id, user)
+    event_rows = get_live_session_events(MEETING_DB_PATH, session_id)
+    visual_rows = get_live_session_visual_events(MEETING_DB_PATH, session_id)
+    config = default_config()
+    live_payload = build_live_session_payload(session_row, event_rows, config, visual_rows=visual_rows)
+    return _create_gitlab_preview_for_payload(
+        source_kind="live-session",
+        source_id=str(session_id),
+        source_payload=live_payload,
+        user=user,
+        request_payload=request_payload,
+    )
+
+
+def _create_meeting_gitlab_preview(
+    meeting_id: int,
+    user: dict[str, Any],
+    request_payload: dict[str, Any],
+) -> dict[str, Any]:
+    record = _resolve_owned_meeting_record(meeting_id, user)
+    meeting_payload = json.loads(str(record.get("result_json") or "{}"))
+    meeting_payload["storage"] = {
+        "meeting_id": int(record["id"]),
+        "output_dir": str(record.get("output_dir") or ""),
+        "result_file": str(record.get("result_file") or ""),
+        "created_at": str(record.get("created_at") or ""),
+        "username": str(record.get("username") or ""),
+    }
+    meeting_payload.setdefault("metadata", {})
+    if isinstance(meeting_payload["metadata"], dict):
+        meeting_payload["metadata"].setdefault("run_name", str(record.get("run_name") or ""))
+    return _create_gitlab_preview_for_payload(
+        source_kind="meeting",
+        source_id=str(meeting_id),
+        source_payload=meeting_payload,
+        user=user,
+        request_payload=request_payload,
+    )
+
+
+def _sync_gitlab_preview(
+    *,
+    source_kind: str,
+    source_id: str,
+    user: dict[str, Any],
+    request_payload: dict[str, Any],
+    preview_builder,
+) -> dict[str, Any]:
     approval_id = str(request_payload.get("approval_id") or "").strip()
     execution_run = get_agent_execution_run(MEETING_DB_PATH, approval_id) if approval_id else None
     if execution_run is None:
-        preview_payload = _create_gitlab_preview(session_id, user, request_payload)
+        preview_payload = preview_builder()
         approval_id = str(preview_payload.get("approval_id") or "")
         execution_run = get_agent_execution_run(MEETING_DB_PATH, approval_id)
     if execution_run is None:
@@ -423,8 +494,8 @@ def _sync_gitlab_preview(
     )
     save_gitlab_sync(
         MEETING_DB_PATH,
-        source_kind="live-session",
-        source_id=str(session_id),
+        source_kind=source_kind,
+        source_id=source_id,
         project_ref=str(connection_overrides.get("project_id") or config.gitlab_project_id or ""),
         dry_run=sync_result.get("status") != "synced",
         plan=plan,
@@ -437,6 +508,34 @@ def _sync_gitlab_preview(
         "plan": plan,
         "sync_result": sync_result,
     }
+
+
+def _sync_live_gitlab_preview(
+    session_id: int,
+    user: dict[str, Any],
+    request_payload: dict[str, Any],
+) -> dict[str, Any]:
+    return _sync_gitlab_preview(
+        source_kind="live-session",
+        source_id=str(session_id),
+        user=user,
+        request_payload=request_payload,
+        preview_builder=lambda: _create_gitlab_preview(session_id, user, request_payload),
+    )
+
+
+def _sync_meeting_gitlab_preview(
+    meeting_id: int,
+    user: dict[str, Any],
+    request_payload: dict[str, Any],
+) -> dict[str, Any]:
+    return _sync_gitlab_preview(
+        source_kind="meeting",
+        source_id=str(meeting_id),
+        user=user,
+        request_payload=request_payload,
+        preview_builder=lambda: _create_meeting_gitlab_preview(meeting_id, user, request_payload),
+    )
 
 
 def _decode_base64_frame(image_base64: str):
@@ -607,7 +706,7 @@ async def live_gitlab_preview(session_id: int, request: Request, payload: dict |
 async def live_gitlab_sync(session_id: int, request: Request, payload: dict | None = None) -> dict:
     user = _require_session_user(request)
     request_payload = await _collect_request_payload(request, payload)
-    return _sync_gitlab_preview(session_id, user, request_payload)
+    return _sync_live_gitlab_preview(session_id, user, request_payload)
 
 
 @app.post("/api/v1/live/{session_id}/finalize")

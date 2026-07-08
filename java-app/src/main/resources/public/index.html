@@ -180,6 +180,32 @@
                   <div class="empty-state">Process a meeting to inspect the visual-analysis extension.</div>
                 </div>
               </div>
+              <div class="panel nested property-card">
+                <h4>GitLab Assignment</h4>
+                <p class="muted">Turn this imported meeting into a GitLab execution plan with blockers, action items, and assignee mapping.</p>
+                <div class="analysis-range-grid">
+                  <label>GitLab Base URL
+                    <input type="text" id="meetingGitlabBaseUrlInput" placeholder="https://gitlab.com">
+                  </label>
+                  <label>Project ID or Path
+                    <input type="text" id="meetingGitlabProjectIdInput" placeholder="group/project or 123456">
+                  </label>
+                </div>
+                <label>Private Token
+                  <input type="password" id="meetingGitlabPrivateTokenInput" placeholder="Optional if configured on the backend">
+                </label>
+                <label>Assignee Map JSON
+                  <textarea id="meetingGitlabAssigneeMapInput" rows="5" placeholder='{"kash": 123, "akanksha": 456}'></textarea>
+                </label>
+                <div class="button-row">
+                  <button id="meetingGitlabPreviewBtn" class="ghost-btn">Preview Plan</button>
+                  <button id="meetingGitlabSyncBtn" class="primary-btn">Assign In GitLab</button>
+                </div>
+                <div id="meetingGitlabStatus" class="upload-status">Open an imported meeting, then preview the GitLab plan before creating issues.</div>
+                <div id="meetingGitlabResult" class="trace-card">
+                  <div class="empty-state">Recorded-meeting preview results will appear here.</div>
+                </div>
+              </div>
               <div id="transcriptList" class="transcript-list"></div>
             </article>
           </section>

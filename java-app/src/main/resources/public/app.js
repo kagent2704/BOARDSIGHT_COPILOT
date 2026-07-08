@@ -94,6 +94,14 @@ const gitlabPreviewBtn = document.getElementById("gitlabPreviewBtn");
 const gitlabSyncBtn = document.getElementById("gitlabSyncBtn");
 const gitlabStatus = document.getElementById("gitlabStatus");
 const gitlabResult = document.getElementById("gitlabResult");
+const meetingGitlabBaseUrlInput = document.getElementById("meetingGitlabBaseUrlInput");
+const meetingGitlabProjectIdInput = document.getElementById("meetingGitlabProjectIdInput");
+const meetingGitlabPrivateTokenInput = document.getElementById("meetingGitlabPrivateTokenInput");
+const meetingGitlabAssigneeMapInput = document.getElementById("meetingGitlabAssigneeMapInput");
+const meetingGitlabPreviewBtn = document.getElementById("meetingGitlabPreviewBtn");
+const meetingGitlabSyncBtn = document.getElementById("meetingGitlabSyncBtn");
+const meetingGitlabStatus = document.getElementById("meetingGitlabStatus");
+const meetingGitlabResult = document.getElementById("meetingGitlabResult");
 const floatingLiveLauncher = document.getElementById("floatingLiveLauncher");
 
 let liveRefreshHandle = null;
@@ -197,6 +205,8 @@ liveAskActionsBtn?.addEventListener("click", () => askLiveShortcut("What action 
 liveAskBlockersBtn?.addEventListener("click", () => askLiveShortcut("What blockers or risks have been raised so far?"));
 gitlabPreviewBtn?.addEventListener("click", () => runGitLabAssignmentRequest("preview"));
 gitlabSyncBtn?.addEventListener("click", () => runGitLabAssignmentRequest("sync"));
+meetingGitlabPreviewBtn?.addEventListener("click", () => runMeetingGitLabAssignmentRequest("preview"));
+meetingGitlabSyncBtn?.addEventListener("click", () => runMeetingGitLabAssignmentRequest("sync"));
 floatingLiveLauncher?.addEventListener("click", openLiveCopilotPopup);
 
 syncAuthMode();
@@ -1034,6 +1044,12 @@ function setGitLabStatus(message) {
   }
 }
 
+function setMeetingGitLabStatus(message) {
+  if (meetingGitlabStatus) {
+    meetingGitlabStatus.textContent = message;
+  }
+}
+
 async function startLiveSession() {
   try {
     const title = (liveSessionTitleInput?.value || "").trim() || `Live Session ${new Date().toLocaleTimeString()}`;
@@ -1176,6 +1192,27 @@ function gitLabConnectionPayload() {
   return payload;
 }
 
+function meetingGitLabConnectionPayload() {
+  const payload = {};
+  const baseUrl = (meetingGitlabBaseUrlInput?.value || "").trim();
+  const projectId = (meetingGitlabProjectIdInput?.value || "").trim();
+  const privateToken = (meetingGitlabPrivateTokenInput?.value || "").trim();
+  const assigneeMap = (meetingGitlabAssigneeMapInput?.value || "").trim();
+  if (baseUrl) {
+    payload.base_url = baseUrl;
+  }
+  if (projectId) {
+    payload.project_id = projectId;
+  }
+  if (privateToken) {
+    payload.private_token = privateToken;
+  }
+  if (assigneeMap) {
+    payload.assignee_map = assigneeMap;
+  }
+  return payload;
+}
+
 function renderGitLabResult(payload, mode) {
   if (!gitlabResult) {
     return;
@@ -1222,6 +1259,49 @@ function renderGitLabResult(payload, mode) {
   ].filter(Boolean).join("\n");
 }
 
+function renderMeetingGitLabResult(payload, mode) {
+  if (!meetingGitlabResult) {
+    return;
+  }
+  const plan = payload.plan || {};
+  const issues = plan.issues || [];
+  const syncResult = payload.sync_result || {};
+  const createdIssues = syncResult.created_issues || [];
+  const createdLinks = syncResult.created_links || [];
+  const summaryLines = [
+    `${mode === "sync" ? "Sync" : "Preview"} status: ${escapeHtml(payload.status || "unknown")}`,
+    `Meeting: ${escapeHtml(payload.meeting_title || plan.meeting_title || "Recorded meeting")}`,
+    `Planned issues: ${issues.length}`,
+    `Dependency links: ${(plan.issue_links || []).length}`,
+  ];
+  if (payload.approval_id) {
+    summaryLines.push(`Approval id: ${escapeHtml(payload.approval_id)}`);
+  }
+  if (syncResult.reason) {
+    summaryLines.push(`Reason: ${escapeHtml(syncResult.reason)}`);
+  }
+  if (syncResult.project_id) {
+    summaryLines.push(`Project: ${escapeHtml(syncResult.project_id)}`);
+  }
+  const issueLines = issues.length === 0
+    ? ["No issues were generated from the recorded meeting yet."]
+    : issues.slice(0, 12).map((issue) => {
+      const owner = issue.owner ? ` | owner ${issue.owner}` : "";
+      const dueDate = issue.due_date ? ` | due ${issue.due_date}` : "";
+      return `${issue.local_key} | ${issue.kind} | ${issue.title}${owner}${dueDate}`;
+    });
+  const createdLines = createdIssues.map((issue) => `${issue.local_key} -> #${issue.iid} ${issue.title || ""}`.trim());
+  const linkLines = createdLinks.map((link) => `#${link.source_issue_iid} ${link.link_type || "links"} #${link.target_issue_iid}`);
+  meetingGitlabResult.textContent = [
+    summaryLines.join("\n"),
+    "",
+    "Planned issues:",
+    issueLines.join("\n"),
+    createdLines.length > 0 ? `\nCreated issues:\n${createdLines.join("\n")}` : "",
+    linkLines.length > 0 ? `\nCreated links:\n${linkLines.join("\n")}` : "",
+  ].filter(Boolean).join("\n");
+}
+
 async function runGitLabAssignmentRequest(mode) {
   if (!state.liveSession?.session?.id) {
     setGitLabStatus("Start a live session before using GitLab assignment.");
@@ -1258,6 +1338,45 @@ async function runGitLabAssignmentRequest(mode) {
   } catch (error) {
     if (error?.status !== 401) {
       setGitLabStatus("GitLab assignment is unavailable right now.");
+    }
+  }
+}
+
+async function runMeetingGitLabAssignmentRequest(mode) {
+  const meetingId = state.currentMeeting?.storage?.meeting_id || state.currentMeetingId;
+  if (!meetingId) {
+    setMeetingGitLabStatus("Open a recorded meeting before using GitLab assignment.");
+    return;
+  }
+
+  const isSync = mode === "sync";
+  setMeetingGitLabStatus(isSync ? "Assigning recorded-meeting work into GitLab..." : "Building GitLab preview from the recorded meeting...");
+
+  try {
+    const requestPayload = { ...meetingGitLabConnectionPayload() };
+    if (isSync && state.currentMeeting?.gitlabApprovalId) {
+      requestPayload.approval_id = state.currentMeeting.gitlabApprovalId;
+    }
+    const response = await apiFetch(`/api/v1/meetings/${encodeURIComponent(meetingId)}/gitlab/${isSync ? "sync" : "preview"}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestPayload),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setMeetingGitLabStatus(payload.error || payload.detail || "GitLab assignment request failed.");
+      return;
+    }
+    state.currentMeeting = { ...state.currentMeeting, gitlabApprovalId: payload.approval_id || state.currentMeeting?.gitlabApprovalId };
+    renderMeetingGitLabResult(payload, mode);
+    setMeetingGitLabStatus(
+      isSync
+        ? (payload.sync_result?.status === "synced" ? "Recorded-meeting GitLab assignment synced successfully." : "Recorded-meeting GitLab sync completed in preview or dry-run mode.")
+        : "Recorded-meeting GitLab preview generated."
+    );
+  } catch (error) {
+    if (error?.status !== 401) {
+      setMeetingGitLabStatus("Recorded-meeting GitLab assignment is unavailable right now.");
     }
   }
 }
