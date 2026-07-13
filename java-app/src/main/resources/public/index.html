@@ -11,8 +11,8 @@
     <aside class="brand-panel">
       <div class="brand-mark">B</div>
       <h1>BoardSight</h1>
-      <p class="tagline">Vision-Driven Structural Accountability.</p>
-      <p class="subtag">Observe. Analyse. Strengthen Governance.</p>
+      <p class="tagline">Meeting intelligence for decisions, follow-through, and governance visibility.</p>
+      <p class="subtag">Recorded meetings, live copilot, workflow modelling, and action tracking in one calmer workspace.</p>
       <button id="themeToggle" class="theme-toggle">Switch Theme</button>
     </aside>
 
@@ -53,14 +53,13 @@
         <header class="topbar panel">
           <div class="topbar-title">
             <span class="logo-chip">BoardSight</span>
-            <input id="searchInput" class="search-input" placeholder="Search meetings, decisions, people...">
+            <input id="searchInput" class="search-input" placeholder="Search meetings and decisions">
           </div>
           <div class="topbar-actions">
             <label class="upload-btn">
               <input type="file" id="uploadInput" accept="video/*" hidden>
-              <span>Upload Meeting</span>
+              <span>Upload</span>
             </label>
-            <button id="openLivePopupBtn" class="ghost-btn">Live Copilot Popup</button>
             <button id="refreshBtn" class="ghost-btn">Refresh</button>
             <button id="signOutBtn" class="ghost-btn">Sign Out</button>
             <div id="topAvatar" class="avatar">JD</div>
@@ -70,16 +69,15 @@
         <div class="layout-grid">
           <nav class="sidebar panel">
             <div class="nav-group">
-              <button class="nav-item active" data-view="dashboard">Home</button>
-              <button class="nav-item" data-view="meetings">Meetings</button>
-              <button class="nav-item" data-view="analyze">Upload & Analyze</button>
-              <button class="nav-item" data-view="live">Live Meeting</button>
+              <button class="nav-item active" data-view="dashboard">Dashboard</button>
+              <button class="nav-item" data-view="meetings">Meeting Library</button>
+              <button class="nav-item" data-view="analyze">Upload</button>
+              <button class="nav-item" data-view="live">Live Copilot</button>
               <button class="nav-item" data-view="trace">Decision Trace</button>
-              <button class="nav-item" data-view="workflow">Workflow Modelling</button>
+              <button class="nav-item" data-view="workflow">Workflow</button>
             </div>
             <div class="nav-group">
-              <div class="nav-label">Admin</div>
-              <button class="nav-item" data-view="admin">System Settings</button>
+              <button class="nav-item" data-view="admin">Settings</button>
             </div>
             <div class="user-chip">
               <div id="userInitials" class="avatar small">JD</div>
@@ -152,12 +150,6 @@
                   <button id="exportXlsxBtn" class="ghost-btn">Export XLSX</button>
                 </div>
               </div>
-              <div class="tabs">
-                <button class="tab active" data-tab="overview">Overview</button>
-                <button class="tab" data-tab="speakers">Speakers</button>
-                <button class="tab" data-tab="transcript">Transcript</button>
-                <button class="tab" data-tab="insights">Insights</button>
-              </div>
               <div class="meeting-grid">
                 <div class="media-card panel nested">
                   <img id="meetingCover" class="cover-image" src="" alt="Meeting summary">
@@ -173,7 +165,7 @@
                 <div class="panel-title-row">
                   <div>
                     <h4>Computer Vision Coverage</h4>
-                    <p class="muted">Frame sampling, speaker-versus-presentation distinction, and detected visual artifact types.</p>
+                    <p class="muted">A compact view of sampled visuals, presentation windows, and artifact labels.</p>
                   </div>
                 </div>
                 <div id="cvFeatureContent" class="cv-feature-content">
@@ -182,7 +174,7 @@
               </div>
               <div class="panel nested property-card">
                 <h4>GitLab Assignment</h4>
-                <p class="muted">Turn this imported meeting into a GitLab execution plan with blockers, action items, and assignee mapping.</p>
+                <p class="muted">Convert this meeting into assignable GitLab work when you are ready to operationalize it.</p>
                 <div class="analysis-range-grid">
                   <label>GitLab Base URL
                     <input type="text" id="meetingGitlabBaseUrlInput" placeholder="https://gitlab.com">
@@ -262,7 +254,7 @@
               <div class="panel-title-row">
                 <div>
                   <h3>Upload & Analyze</h3>
-                  <p class="muted">Run the lightweight BoardSight recorded-meeting pipeline with fast speech analysis, sparse visual sampling, person detection, structured decisions, and optional Gemini reasoning.</p>
+                  <p class="muted">Import a meeting and generate a structured report, workflow summary, and export set.</p>
                 </div>
                 <span class="model-pill">Lightweight production pipeline</span>
               </div>
@@ -286,7 +278,7 @@
                     <input type="text" id="analysisEndInput" placeholder="Leave blank for full video">
                   </label>
                 </div>
-                <p class="muted range-note">Recorded meetings use the lightweight multimodal production path. The live copilot remains an additional companion layer for in-meeting questions and catch-up assistance.</p>
+                <p class="muted range-note">Use recorded analysis for post-meeting review. Use Live Copilot when you need catch-up support during a meeting.</p>
                 <div id="uploadStatus" class="upload-status">No upload in progress.</div>
               </div>
             </article>
@@ -297,7 +289,7 @@
               <div class="panel-title-row">
                 <div>
                   <h3>Live Meeting Copilot</h3>
-                  <p class="muted">Capture meeting updates as they happen and ask BoardSight what has already been discussed, decided, assigned, or blocked.</p>
+                  <p class="muted">Capture what is happening now, ask catch-up questions, and turn discussion into immediate follow-up.</p>
                 </div>
                 <span class="model-pill">Live Copilot</span>
               </div>
@@ -322,7 +314,7 @@
                 <button id="liveFinalizeBtn" class="ghost-btn">Finalize Session</button>
               </div>
               <div id="liveStatus" class="upload-status">No live session started.</div>
-              <p class="muted range-note">Browser apps cannot draw a true system-wide overlay on top of every tab, so BoardSight opens a dedicated pop-out copilot window instead. You can keep that small window visible while sharing another tab.</p>
+              <p class="muted range-note">Use the floating popup if you want the copilot visible while presenting or sharing another tab.</p>
 
               <div class="workflow-grid live-grid">
                 <div class="panel nested property-card">
