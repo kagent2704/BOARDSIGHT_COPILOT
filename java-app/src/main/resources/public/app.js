@@ -68,10 +68,6 @@ const notificationsPanel = document.getElementById("notificationsPanel");
 const liveSessionTitleInput = document.getElementById("liveSessionTitleInput");
 const liveSpeakerInput = document.getElementById("liveSpeakerInput");
 const liveStartBtn = document.getElementById("liveStartBtn");
-const liveListenBtn = document.getElementById("liveListenBtn");
-const liveStopListenBtn = document.getElementById("liveStopListenBtn");
-const liveScreenBtn = document.getElementById("liveScreenBtn");
-const liveStopScreenBtn = document.getElementById("liveStopScreenBtn");
 const liveRefreshBtn = document.getElementById("liveRefreshBtn");
 const liveOpenPopupBtn = document.getElementById("liveOpenPopupBtn");
 const liveFinalizeBtn = document.getElementById("liveFinalizeBtn");
@@ -214,10 +210,6 @@ liveOpenPopupBtn?.addEventListener("click", openLiveCopilotPopup);
 liveFinalizeBtn?.addEventListener("click", finalizeLiveSession);
 liveAddNoteBtn?.addEventListener("click", submitLiveNote);
 liveAskBtn?.addEventListener("click", submitLiveQuestion);
-liveListenBtn?.addEventListener("click", startLiveListening);
-liveStopListenBtn?.addEventListener("click", stopLiveListening);
-liveScreenBtn?.addEventListener("click", startLiveScreenCapture);
-liveStopScreenBtn?.addEventListener("click", stopLiveScreenCapture);
 liveAskSummaryBtn?.addEventListener("click", () => askLiveShortcut("What happened so far?"));
 liveAskDecisionsBtn?.addEventListener("click", () => askLiveShortcut("What decisions have been made so far?"));
 liveAskActionsBtn?.addEventListener("click", () => askLiveShortcut("What action items should I know right now?"));
@@ -1095,7 +1087,25 @@ function setMeetingGitLabStatus(message) {
 }
 
 async function startLiveSession() {
+  if (state.liveSession?.session?.status === "active") {
+    setLiveStatus(`Live session already active: ${state.liveSession.session.title}`);
+    return;
+  }
+
+  let pendingShareStream = null;
   try {
+    if (navigator.mediaDevices?.getDisplayMedia) {
+      try {
+        pendingShareStream = await navigator.mediaDevices.getDisplayMedia({
+          video: { frameRate: { ideal: 1, max: 2 } },
+          audio: true
+        });
+      } catch {
+        setLiveStatus("Screen or audio sharing was cancelled. Live session was not started.");
+        return;
+      }
+    }
+
     const title = (liveSessionTitleInput?.value || "").trim() || `Live Session ${new Date().toLocaleTimeString()}`;
     const response = await apiFetch("/api/v1/live/start", {
       method: "POST",
@@ -1103,6 +1113,13 @@ async function startLiveSession() {
       body: JSON.stringify({ title })
     });
     if (!response.ok) {
+      pendingShareStream?.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch {
+          // no-op
+        }
+      });
       const payload = await response.json().catch(() => ({}));
       setLiveStatus(payload.error || payload.detail || "Unable to start a live session.");
       return;
@@ -1111,8 +1128,21 @@ async function startLiveSession() {
     state.liveSession = { session: payload.session, transcript: { segments: [], full_text: "" }, copilot_context: { source: "pending" } };
     renderLiveSession();
     ensureLivePolling();
+    startLiveListening();
+    if (pendingShareStream) {
+      await startLiveScreenCapture(pendingShareStream);
+    } else {
+      setLiveStatus("Live session started. Speech capture is active. Screen sharing is not supported in this browser.");
+    }
     await refreshLiveSession();
   } catch (error) {
+    pendingShareStream?.getTracks().forEach((track) => {
+      try {
+        track.stop();
+      } catch {
+        // no-op
+      }
+    });
     if (error?.status !== 401) {
       setLiveStatus("Unable to start a live session right now.");
     }
@@ -1443,6 +1473,7 @@ async function finalizeLiveSession() {
     stopLiveScreenCapture();
     stopLivePolling();
     await refreshLiveSession();
+    setLiveStatus("Live session finalized. Screen sharing and listening have stopped.");
   } catch (error) {
     if (error?.status !== 401) {
       setLiveStatus("Unable to finalize the live session right now.");
@@ -1584,12 +1615,12 @@ async function uploadLiveScreenSample() {
   }
 }
 
-async function startLiveScreenCapture() {
+async function startLiveScreenCapture(prefetchedStream = null) {
   if (!state.liveSession?.session?.id) {
     setLiveStatus("Start a live session before enabling screen capture.");
     return;
   }
-  if (!navigator.mediaDevices?.getDisplayMedia) {
+  if (!prefetchedStream && !navigator.mediaDevices?.getDisplayMedia) {
     setLiveStatus("This browser does not support screen capture.");
     return;
   }
@@ -1599,9 +1630,9 @@ async function startLiveScreenCapture() {
   }
   try {
     ensureLiveScreenElements();
-    liveScreenStream = await navigator.mediaDevices.getDisplayMedia({
+    liveScreenStream = prefetchedStream || await navigator.mediaDevices.getDisplayMedia({
       video: { frameRate: { ideal: 1, max: 2 } },
-      audio: false
+      audio: true
     });
     liveScreenVideo.srcObject = liveScreenStream;
     await liveScreenVideo.play();
@@ -1615,7 +1646,7 @@ async function startLiveScreenCapture() {
     liveScreenCaptureHandle = window.setInterval(() => {
       uploadLiveScreenSample();
     }, 15000);
-    setLiveStatus("Screen capture started. BoardSight will sample shared visuals every 15 seconds.");
+    setLiveStatus("Live session started. Screen sharing is active and BoardSight will sample shared visuals every 15 seconds.");
   } catch (error) {
     stopLiveScreenCapture();
     setLiveStatus("Screen capture was cancelled or could not be started.");
