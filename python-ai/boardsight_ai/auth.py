@@ -289,6 +289,71 @@ def create_user(
     return created is not None
 
 
+def upsert_admin_user(
+    database_path: Path,
+    *,
+    username: str,
+    password: str,
+    email: str,
+    display_name: str,
+) -> dict[str, Any]:
+    init_auth_storage(database_path)
+    resolved_username = username.strip()
+    resolved_email = email.strip().lower()
+    resolved_display_name = display_name.strip() or resolved_username
+    row = fetchone(
+        database_path,
+        """
+        SELECT id, username, email
+        FROM users
+        WHERE LOWER(username) = LOWER(:username) OR LOWER(email) = LOWER(:email)
+        ORDER BY CASE WHEN LOWER(email) = LOWER(:email) THEN 0 ELSE 1 END
+        LIMIT 1
+        """,
+        {"username": resolved_username, "email": resolved_email},
+    )
+    if row is None:
+        create_user(
+            database_path,
+            resolved_username,
+            password,
+            "admin",
+            display_name=resolved_display_name,
+            email=resolved_email,
+            email_verified=True,
+        )
+        created = get_user_by_username(database_path, resolved_username)
+        if created is None:
+            raise RuntimeError("Unable to create bootstrap admin user.")
+        return created
+
+    execute(
+        database_path,
+        """
+        UPDATE users
+        SET username = :username,
+            email = :email,
+            display_name = :display_name,
+            password_hash = :password_hash,
+            role = 'admin',
+            email_verified = :email_verified
+        WHERE id = :user_id
+        """,
+        {
+            "username": resolved_username,
+            "email": resolved_email,
+            "display_name": resolved_display_name,
+            "password_hash": hash_password(password),
+            "email_verified": True,
+            "user_id": int(row["id"]),
+        },
+    )
+    updated = get_user_by_username(database_path, resolved_username)
+    if updated is None:
+        raise RuntimeError("Unable to update bootstrap admin user.")
+    return updated
+
+
 def _update_password_hash(database_path: Path, user_id: int, password: str) -> None:
     execute(
         database_path,

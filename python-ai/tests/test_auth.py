@@ -13,6 +13,7 @@ from boardsight_ai.auth import (
     issue_email_verification_token,
     legacy_hash_password,
     revoke_session,
+    upsert_admin_user,
     verify_email_token,
 )
 from boardsight_ai.database import execute, fetchone
@@ -127,3 +128,30 @@ def test_get_user_lookup_helpers_are_case_insensitive(tmp_path: Path) -> None:
     assert by_username["display_name"] == "Kash Mira"
     assert by_email is not None
     assert by_email["username"] == "Kash"
+
+
+def test_upsert_admin_user_promotes_existing_email_owner(tmp_path: Path) -> None:
+    db_path = tmp_path / "auth.db"
+    create_user(
+        db_path,
+        "kashnt007",
+        "secret",
+        role="executive_observer",
+        display_name="Kashmira",
+        email="kashmiraspatil@gmail.com",
+    )
+
+    admin_user = upsert_admin_user(
+        db_path,
+        username="kashmira_admin",
+        password="kashmira1234",
+        email="kashmiraspatil@gmail.com",
+        display_name="Kashmira Admin",
+    )
+
+    assert admin_user["username"] == "kashmira_admin"
+    assert admin_user["role"] == "admin"
+    assert admin_user["email"] == "kashmiraspatil@gmail.com"
+
+    session = authenticate_user(db_path, "kashmira_admin", "kashmira1234")
+    assert session is not None

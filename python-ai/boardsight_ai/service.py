@@ -42,10 +42,11 @@ from boardsight_ai.auth import (
     issue_email_verification_token,
     revoke_session,
     session_ttl_seconds,
+    upsert_admin_user,
     verify_email_token,
 )
 from boardsight_ai.agent_storage import create_agent_execution_run, get_agent_execution_run, init_agent_storage, update_agent_execution_run
-from boardsight_ai.config import default_config
+from boardsight_ai.config import _load_local_env, default_config
 from boardsight_ai.emailer import send_verification_email
 from boardsight_ai.gitlab_execution import build_gitlab_execution_plan, normalize_gitlab_plan_source, sync_plan_to_gitlab
 from boardsight_ai.gitlab_storage import init_gitlab_storage, save_gitlab_sync
@@ -74,6 +75,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "output" / "appdata"
 AUTH_DB_PATH = DATA_DIR / "boardsight_auth.db"
 MEETING_DB_PATH = DATA_DIR / "boardsight_meetings.db"
+_load_local_env(PROJECT_ROOT)
 init_auth_storage(AUTH_DB_PATH)
 init_storage(MEETING_DB_PATH)
 init_agent_storage(MEETING_DB_PATH)
@@ -100,14 +102,12 @@ def _bootstrap_admin_from_env() -> None:
         return
     email = os.getenv("BOARDSIGHT_BOOTSTRAP_ADMIN_EMAIL", f"{username}@boardsight.local").strip().lower()
     display_name = os.getenv("BOARDSIGHT_BOOTSTRAP_ADMIN_DISPLAY_NAME", "BoardSight Admin").strip() or "BoardSight Admin"
-    create_user(
+    upsert_admin_user(
         AUTH_DB_PATH,
-        username,
-        password,
-        "admin",
-        display_name=display_name,
+        username=username,
+        password=password,
         email=email,
-        email_verified=True,
+        display_name=display_name,
     )
 
 
@@ -132,6 +132,50 @@ def _assign_orphaned_runs_to_bootstrap_admin() -> None:
         WHERE user_id IS NULL
         """,
         {"user_id": int(admin_row["id"]), "username": str(admin_row["username"])},
+    )
+
+
+def _migrate_legacy_admin_runs_to_bootstrap_admin() -> None:
+    if not _env_bool("BOARDSIGHT_MIGRATE_LEGACY_ADMIN_RUNS", "false"):
+        return
+    bootstrap_username = os.getenv("BOARDSIGHT_BOOTSTRAP_ADMIN_USERNAME", "").strip()
+    legacy_username = os.getenv("BOARDSIGHT_LEGACY_ADMIN_USERNAME", "admin").strip()
+    if not bootstrap_username or not legacy_username:
+        return
+    bootstrap_row = fetchone(
+        AUTH_DB_PATH,
+        "SELECT id, username FROM users WHERE LOWER(username) = LOWER(:username)",
+        {"username": bootstrap_username},
+    )
+    if bootstrap_row is None:
+        return
+    execute(
+        MEETING_DB_PATH,
+        """
+        UPDATE meetings
+        SET user_id = :user_id,
+            username = :username
+        WHERE LOWER(COALESCE(username, '')) = LOWER(:legacy_username)
+        """,
+        {
+            "user_id": int(bootstrap_row["id"]),
+            "username": str(bootstrap_row["username"]),
+            "legacy_username": legacy_username,
+        },
+    )
+    execute(
+        MEETING_DB_PATH,
+        """
+        UPDATE live_sessions
+        SET user_id = :user_id,
+            username = :username
+        WHERE LOWER(COALESCE(username, '')) = LOWER(:legacy_username)
+        """,
+        {
+            "user_id": int(bootstrap_row["id"]),
+            "username": str(bootstrap_row["username"]),
+            "legacy_username": legacy_username,
+        },
     )
 
 
@@ -167,6 +211,7 @@ def _run_retention_maintenance() -> dict[str, object]:
 
 _bootstrap_admin_from_env()
 _assign_orphaned_runs_to_bootstrap_admin()
+_migrate_legacy_admin_runs_to_bootstrap_admin()
 _run_retention_maintenance()
 
 
