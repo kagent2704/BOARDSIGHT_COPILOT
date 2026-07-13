@@ -65,12 +65,24 @@
             </button>
             <label class="upload-btn">
               <input type="file" id="uploadInput" accept="video/*" hidden>
-              <span class="action-btn">
+              <span class="action-btn upload-action">
                 <span class="btn-glyph">+</span>
                 <span>Upload</span>
               </span>
             </label>
-            <button class="icon-btn" type="button" aria-label="Notifications">o</button>
+            <div class="notification-wrap">
+              <button id="notificationsBtn" class="icon-btn" type="button" aria-label="Notifications" aria-expanded="false">
+                <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 4a4 4 0 0 0-4 4v2.2c0 .9-.3 1.8-.9 2.5L5.8 14a1 1 0 0 0 .8 1.7h10.8a1 1 0 0 0 .8-1.7l-1.3-1.3c-.6-.7-.9-1.6-.9-2.5V8a4 4 0 0 0-4-4Z"></path>
+                  <path d="M10 18a2 2 0 0 0 4 0"></path>
+                </svg>
+              </button>
+              <div id="notificationsPanel" class="notifications-panel hidden">
+                <strong>Notifications</strong>
+                <div class="notification-item">Live Copilot is ready when a meeting session starts.</div>
+                <div class="notification-item">Recorded meeting analysis will appear in Recent Meetings after upload.</div>
+              </div>
+            </div>
             <button id="refreshBtn" class="ghost-btn">Refresh</button>
             <button id="signOutBtn" class="ghost-btn">Sign Out</button>
             <div id="topAvatar" class="avatar">JD</div>

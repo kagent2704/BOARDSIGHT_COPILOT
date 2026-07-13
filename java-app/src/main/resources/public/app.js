@@ -63,6 +63,8 @@ const analysisStartInput = document.getElementById("analysisStartInput");
 const analysisEndInput = document.getElementById("analysisEndInput");
 const analysisProfileInput = document.getElementById("analysisProfileInput");
 const openLivePopupBtn = document.getElementById("openLivePopupBtn");
+const notificationsBtn = document.getElementById("notificationsBtn");
+const notificationsPanel = document.getElementById("notificationsPanel");
 const liveSessionTitleInput = document.getElementById("liveSessionTitleInput");
 const liveSpeakerInput = document.getElementById("liveSpeakerInput");
 const liveStartBtn = document.getElementById("liveStartBtn");
@@ -189,6 +191,23 @@ exportDocxBtn.addEventListener("click", () => openReport("structured_report.docx
 exportXlsxBtn.addEventListener("click", () => openReport("structured_report.xlsx"));
 exportTraceBtn.addEventListener("click", () => openReport("structured_report.pdf"));
 openLivePopupBtn?.addEventListener("click", openLiveCopilotPopup);
+notificationsBtn?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  const willOpen = notificationsPanel?.classList.contains("hidden");
+  notificationsPanel?.classList.toggle("hidden", !willOpen);
+  notificationsBtn.classList.toggle("is-active", Boolean(willOpen));
+  notificationsBtn.setAttribute("aria-expanded", willOpen ? "true" : "false");
+});
+
+document.addEventListener("click", (event) => {
+  if (!notificationsPanel || !notificationsBtn) return;
+  if (notificationsPanel.classList.contains("hidden")) return;
+  const target = event.target;
+  if (target instanceof Node && (notificationsPanel.contains(target) || notificationsBtn.contains(target))) return;
+  notificationsPanel.classList.add("hidden");
+  notificationsBtn.classList.remove("is-active");
+  notificationsBtn.setAttribute("aria-expanded", "false");
+});
 liveStartBtn?.addEventListener("click", startLiveSession);
 liveRefreshBtn?.addEventListener("click", () => refreshLiveSession());
 liveOpenPopupBtn?.addEventListener("click", openLiveCopilotPopup);
