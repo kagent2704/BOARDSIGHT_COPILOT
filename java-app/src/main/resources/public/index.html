@@ -59,12 +59,18 @@
             <input id="searchInput" class="search-input" placeholder="Search meetings, decisions, or insights...">
           </div>
           <div class="topbar-actions">
-            <button id="openLivePopupBtn" class="primary-btn">Start Live Meeting</button>
+            <button id="openLivePopupBtn" class="primary-btn action-btn">
+              <span class="btn-glyph">+</span>
+              <span>Start Live Meeting</span>
+            </button>
             <label class="upload-btn">
               <input type="file" id="uploadInput" accept="video/*" hidden>
-              <span>Upload</span>
+              <span class="action-btn">
+                <span class="btn-glyph">+</span>
+                <span>Upload</span>
+              </span>
             </label>
-            <button class="icon-btn" type="button" aria-label="Notifications">◌</button>
+            <button class="icon-btn" type="button" aria-label="Notifications">o</button>
             <button id="refreshBtn" class="ghost-btn">Refresh</button>
             <button id="signOutBtn" class="ghost-btn">Sign Out</button>
             <div id="topAvatar" class="avatar">JD</div>
