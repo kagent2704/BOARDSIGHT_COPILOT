@@ -139,7 +139,7 @@ button:hover { transform: translateY(-1px); }
 }
 .topbar-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-shrink: 0; flex-wrap: wrap; }
 .topbar-actions > * { flex: 0 0 auto; }
-.upload-btn { display: inline-flex; align-items: center; }
+.upload-btn { display: inline-flex; align-items: center; width: auto; flex: 0 0 auto; }
 .upload-btn span,
 .ghost-btn,
 .theme-toggle,
@@ -151,10 +151,12 @@ button:hover { transform: translateY(-1px); }
   line-height: 1;
   white-space: nowrap;
 }
-.upload-btn span { min-width: 124px; }
+.upload-btn span { min-width: 0; width: auto; }
 .upload-action {
-  min-width: 126px;
-  padding-inline: 16px;
+  min-width: 108px;
+  width: auto;
+  padding-inline: 14px;
+  gap: 8px;
 }
 .action-btn {
   display: inline-flex;
@@ -174,7 +176,7 @@ button:hover { transform: translateY(-1px); }
   font-weight: 700;
 }
 .icon-btn {
-  width: 52px;
+  width: 56px;
   border-radius: 12px;
   background: transparent;
   border: 1px solid var(--border);
@@ -187,8 +189,8 @@ button:hover { transform: translateY(-1px); }
   border-color: rgba(99,102,241,0.2);
 }
 .icon-svg {
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   stroke: currentColor;
   fill: none;
   stroke-width: 1.9;

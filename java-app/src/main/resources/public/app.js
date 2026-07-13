@@ -1087,13 +1087,12 @@ function setMeetingGitLabStatus(message) {
 }
 
 async function startLiveSession() {
-  if (state.liveSession?.session?.status === "active") {
-    setLiveStatus(`Live session already active: ${state.liveSession.session.title}`);
-    return;
-  }
-
   let pendingShareStream = null;
   try {
+    const hasActiveSession = state.liveSession?.session?.status === "active";
+    if (!isLiveCopilotPopup && (!livePopupHandle || livePopupHandle.closed)) {
+      openLiveCopilotPopup();
+    }
     if (navigator.mediaDevices?.getDisplayMedia) {
       try {
         pendingShareStream = await navigator.mediaDevices.getDisplayMedia({
@@ -1106,33 +1105,44 @@ async function startLiveSession() {
       }
     }
 
-    const title = (liveSessionTitleInput?.value || "").trim() || `Live Session ${new Date().toLocaleTimeString()}`;
-    const response = await apiFetch("/api/v1/live/start", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title })
-    });
-    if (!response.ok) {
-      pendingShareStream?.getTracks().forEach((track) => {
-        try {
-          track.stop();
-        } catch {
-          // no-op
-        }
+    if (!hasActiveSession) {
+      const title = (liveSessionTitleInput?.value || "").trim() || `Live Session ${new Date().toLocaleTimeString()}`;
+      const response = await apiFetch("/api/v1/live/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title })
       });
-      const payload = await response.json().catch(() => ({}));
-      setLiveStatus(payload.error || payload.detail || "Unable to start a live session.");
-      return;
+      if (!response.ok) {
+        pendingShareStream?.getTracks().forEach((track) => {
+          try {
+            track.stop();
+          } catch {
+            // no-op
+          }
+        });
+        const payload = await response.json().catch(() => ({}));
+        setLiveStatus(payload.error || payload.detail || "Unable to start a live session.");
+        return;
+      }
+      const payload = await response.json();
+      state.liveSession = { session: payload.session, transcript: { segments: [], full_text: "" }, copilot_context: { source: "pending" } };
+      renderLiveSession();
+      ensureLivePolling();
+      startLiveListening();
+    } else {
+      ensureLivePolling();
+      startLiveListening();
     }
-    const payload = await response.json();
-    state.liveSession = { session: payload.session, transcript: { segments: [], full_text: "" }, copilot_context: { source: "pending" } };
-    renderLiveSession();
-    ensureLivePolling();
-    startLiveListening();
+
     if (pendingShareStream) {
       await startLiveScreenCapture(pendingShareStream);
+      return;
     } else {
-      setLiveStatus("Live session started. Speech capture is active. Screen sharing is not supported in this browser.");
+      setLiveStatus(
+        hasActiveSession
+          ? `Live session already active: ${state.liveSession.session.title}`
+          : "Live session started. Speech capture is active. Screen sharing is not supported in this browser."
+      );
     }
     await refreshLiveSession();
   } catch (error) {
