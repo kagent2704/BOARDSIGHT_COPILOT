@@ -18,6 +18,10 @@ def email_reply_to() -> str:
     return (os.getenv("BOARDSIGHT_EMAIL_REPLY_TO") or "").strip()
 
 
+def email_user_agent() -> str:
+    return (os.getenv("BOARDSIGHT_EMAIL_USER_AGENT") or "boardsight-ai/1.0").strip()
+
+
 def send_verification_email(*, to_email: str, display_name: str, verification_url: str) -> dict[str, Any]:
     api_key = resend_api_key()
     sender = email_from_address()
@@ -49,6 +53,7 @@ def send_verification_email(*, to_email: str, display_name: str, verification_ur
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
+            "User-Agent": email_user_agent(),
         },
         method="POST",
     )
