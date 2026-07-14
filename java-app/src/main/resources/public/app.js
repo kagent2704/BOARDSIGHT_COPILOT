@@ -846,6 +846,14 @@ function renderCvFeaturePanel() {
   const contentArtifacts = visualArtifacts.filter((artifact) =>
     String(artifact.content_text || "").trim() || String(artifact.content_insight || "").trim()
   );
+  const chartWindows = sumCounts(artifactCounts, ["chart", "charts", "graph", "graphs", "dashboard"]);
+  const documentWindows = sumCounts(artifactCounts, ["document", "documents", "slide", "slides", "presentation-slide"]);
+  const peopleVisibleWindows = visualArtifacts.filter((artifact) => Number(artifact.visible_people_count || 0) > 0).length;
+  const detectionTotal = visualArtifacts.reduce((sum, artifact) => sum + ((artifact.detections || []).length), 0);
+  const hybridWindows = sumCounts(displayCounts, ["hybrid", "mixed"]);
+  const ocrCoverage = sampleCount > 0 ? Math.round((contentArtifacts.length / sampleCount) * 100) : 0;
+  const strongestArtifact = Object.entries(artifactCounts).sort((left, right) => right[1] - left[1])[0];
+  const strongestDisplayMode = Object.entries(displayCounts).sort((left, right) => right[1] - left[1])[0];
   const transcriptSegments = meeting.transcript?.segments || [];
   const activeSpeakerTimeline = meeting.speaker_dominance?.active_speaker_timeline || [];
   const visualSpeakerWindows = activeSpeakerTimeline.filter((entry) => entry.source === "visual-active-speaker");
@@ -912,24 +920,28 @@ function renderCvFeaturePanel() {
       <section class="cv-notes-card">
         <div class="cv-lane-head">
           <strong>What the CV pass is showing</strong>
-          <span>Extension only</span>
+          <span>Live meeting stats</span>
         </div>
         <div class="cv-note-list">
           <div>
-            <strong>Frame splitting</strong>
-            <p class="muted">The video is sampled into time windows, then each sampled frame is classified for display mode and artifact type rather than changing the rest of the BoardSight workflow.</p>
+            <strong>Primary display mode</strong>
+            <p class="muted">${strongestDisplayMode ? `${strongestDisplayMode[0]} led ${strongestDisplayMode[1]} of ${sampleCount} sampled windows.` : "No display-mode classification was returned for this meeting."}</p>
           </div>
           <div>
-            <strong>Speaker vs presentation</strong>
-            <p class="muted">Display mode separates speaker-video scenes from screen-share or hybrid views so presentation-heavy segments stand apart from talking-head segments.</p>
+            <strong>Primary artifact family</strong>
+            <p class="muted">${strongestArtifact ? `${strongestArtifact[0]} was the most common artifact label across ${strongestArtifact[1]} windows.` : "No artifact-type classification was returned for this meeting."}</p>
           </div>
           <div>
-            <strong>Slides, text, charts, and graphs</strong>
-            <p class="muted">Artifact labels group each sampled window into presentation content such as slides, dashboards, documents, and charts/graphs whenever the classifier identifies them.</p>
+            <strong>Readable presentation content</strong>
+            <p class="muted">${contentArtifacts.length} of ${sampleCount} windows exposed readable slide or screen text (${ocrCoverage}% OCR coverage).</p>
           </div>
           <div>
-            <strong>Model path</strong>
-            <p class="muted">${classifierSummary}</p>
+            <strong>Charts, docs, and speaker presence</strong>
+            <p class="muted">${chartWindows} chart/dashboard windows, ${documentWindows} document/slide windows, and ${peopleVisibleWindows} windows with visible people. ${hybridWindows} windows were mixed or hybrid views.</p>
+          </div>
+          <div>
+            <strong>Detection yield</strong>
+            <p class="muted">${detectionTotal} object detections across ${sampleCount} sampled windows. ${classifierSummary}</p>
           </div>
         </div>
       </section>
@@ -945,11 +957,11 @@ function renderCvFeaturePanel() {
           </div>
           <div>
             <strong>Audio speaker windows</strong>
-            <p class="muted">${audioSpeakerWindows.length} timeline segments came from audio-dominance speaker activity.</p>
+            <p class="muted">${audioSpeakerWindows.length} timeline segments came from audio-dominance speaker activity, covering ${transcriptSegments.length > 0 ? Math.round((audioSpeakerWindows.length / transcriptSegments.length) * 100) : 0}% of transcript windows.</p>
           </div>
           <div>
             <strong>Visual speaker windows</strong>
-            <p class="muted">${visualSpeakerWindows.length} windows came from visual active-speaker enrichment.</p>
+            <p class="muted">${visualSpeakerWindows.length} windows came from visual active-speaker enrichment. ${visualSpeakerWindows.length > 0 ? "Visual speaker evidence was available." : "Speaker tracking relied entirely on audio cues here."}</p>
           </div>
           <div>
             <strong>Video probe</strong>
