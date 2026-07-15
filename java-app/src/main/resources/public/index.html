@@ -199,6 +199,57 @@
                   <div class="empty-state">Process a meeting to inspect the visual-analysis extension.</div>
                 </div>
               </div>
+              <div id="governancePanel" class="panel nested governance-panel">
+                <div class="panel-title-row">
+                  <div>
+                    <h4>Governance Review</h4>
+                    <p class="muted">Structured decision, action, blocker, and traceability views for operational follow-through.</p>
+                  </div>
+                </div>
+                <div id="governanceSnapshot" class="governance-snapshot-grid">
+                  <div class="empty-state">Open a processed meeting to inspect the structured governance view.</div>
+                </div>
+                <div class="governance-grid">
+                  <section class="panel nested governance-card">
+                    <div class="panel-title-row compact">
+                      <h5>Decision Register</h5>
+                      <span id="decisionRegisterCount" class="model-pill subtle">0 items</span>
+                    </div>
+                    <div id="decisionRegister" class="governance-table-wrap">
+                      <div class="empty-state">No decision register available.</div>
+                    </div>
+                  </section>
+                  <section class="panel nested governance-card">
+                    <div class="panel-title-row compact">
+                      <h5>Action Register</h5>
+                      <span id="actionRegisterCount" class="model-pill subtle">0 items</span>
+                    </div>
+                    <div id="actionRegister" class="governance-table-wrap">
+                      <div class="empty-state">No action register available.</div>
+                    </div>
+                  </section>
+                </div>
+                <div class="governance-grid">
+                  <section class="panel nested governance-card">
+                    <div class="panel-title-row compact">
+                      <h5>Blockers and Risks</h5>
+                      <span id="riskRegisterCount" class="model-pill subtle">0 items</span>
+                    </div>
+                    <div id="riskRegister" class="governance-list">
+                      <div class="empty-state">No blockers or risks surfaced yet.</div>
+                    </div>
+                  </section>
+                  <section class="panel nested governance-card">
+                    <div class="panel-title-row compact">
+                      <h5>Traceability and Workflow</h5>
+                      <span id="traceabilityCount" class="model-pill subtle">0 links</span>
+                    </div>
+                    <div id="traceabilityRegister" class="governance-list">
+                      <div class="empty-state">No traceability links available yet.</div>
+                    </div>
+                  </section>
+                </div>
+              </div>
               <div class="panel nested property-card">
                 <h4>GitLab Assignment</h4>
                 <p class="muted">Convert this meeting into assignable GitLab work when you are ready to operationalize it.</p>

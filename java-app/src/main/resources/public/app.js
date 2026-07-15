@@ -551,6 +551,7 @@ async function loadMeetings() {
       await loadMeetingDetail(state.currentMeetingId);
     } else {
       renderMeetingDetail();
+      renderGovernancePanel();
       renderCvFeaturePanel();
       renderTrace();
       renderWorkflow();
@@ -575,6 +576,7 @@ async function loadMeetingDetail(meetingId) {
   state.sessionHasProcessed = true;
   updateDashboard();
   renderMeetingDetail();
+  renderGovernancePanel();
   renderCvFeaturePanel();
   renderTrace();
   renderWorkflow();
@@ -809,6 +811,297 @@ function renderMeetingDetail() {
   if (transcriptButton) {
     transcriptButton.addEventListener("click", () => openReport("transcript.csv"));
   }
+}
+
+function buildGovernanceModel(meeting) {
+  if (!meeting) {
+    return {
+      decisions: [],
+      actions: [],
+      risks: [],
+      traces: [],
+      stats: []
+    };
+  }
+
+  const decisionMoments = meeting.decision_moments || [];
+  const prioritized = meeting.workflow_model?.prioritized_decisions || [];
+  const executionPlan = meeting.workflow_model?.execution_plan || [];
+  const bottlenecks = meeting.workflow_model?.bottlenecks || [];
+  const traces = meeting.decision_traces || [];
+  const riskSignals = meeting.metadata?.agentic_contract?.entities?.risk_signals || [];
+  const priorityLookup = new Map(prioritized.map((item) => [String(item.decision_id || ""), item]));
+  const traceLookup = new Map();
+  traces.forEach((trace) => {
+    (trace.execution_tasks || []).forEach((task) => {
+      if (task?.decision_id) {
+        traceLookup.set(String(task.decision_id), trace);
+      }
+    });
+    if (trace?.trace_id?.startsWith?.("TRACE-")) {
+      traceLookup.set(String(trace.trace_id).replace("TRACE-", "DM-"), trace);
+    }
+  });
+
+  const decisions = decisionMoments.map((moment, index) => {
+    const decisionId = String(moment.event_id || `DEC-${index + 1}`);
+    const priority = priorityLookup.get(decisionId) || {};
+    const relatedTasks = executionPlan.filter((task) => String(task.decision_id || "") === decisionId);
+    const trace = traceLookup.get(decisionId) || traces.find((item) =>
+      String(item.title || item.summary || "").toLowerCase().includes(String(moment.text || "").slice(0, 18).toLowerCase())
+    );
+    const blockers = bottlenecks.filter((item) =>
+      String(item || "").toLowerCase().includes(String(moment.speaker || "").toLowerCase())
+      || String(item || "").toLowerCase().includes(String(moment.text || "").split(" ").slice(0, 3).join(" ").toLowerCase())
+    );
+    const priorityScore = Number(priority.priority_score ?? moment.confidence ?? 0);
+    const urgency = priorityScore >= 0.85 ? "High" : priorityScore >= 0.6 ? "Medium" : "Low";
+    const status = blockers.length > 0
+      ? "Blocked"
+      : relatedTasks.length > 0
+        ? "Ready"
+        : "Captured";
+    return {
+      decisionId,
+      title: shorten(trace?.title || moment.text || `Decision ${index + 1}`, 60),
+      exactText: moment.text || "No decision text captured.",
+      owner: trace?.owner || relatedTasks[0]?.owner || moment.speaker || "Unassigned",
+      timestamp: moment.timestamp || "--",
+      urgency,
+      impact: urgency,
+      status,
+      nextAction: relatedTasks[0]?.title || trace?.next_steps?.[0] || "No follow-through recorded",
+      blockers: blockers.length > 0 ? blockers.join(" | ") : "None",
+      evidence: (moment.evidence || []).join(" | ") || "Transcript grounded",
+      gitlab: relatedTasks[0]?.issue_web_url || relatedTasks[0]?.web_url || "Not synced"
+    };
+  });
+
+  const actions = executionPlan.map((task, index) => {
+    const notes = String(task.notes || task.text || "");
+    const dueDate = inferDueDate(`${task.title || ""} ${notes}`);
+    const blockerFlag = /\b(block|depend|waiting|pending)\b/i.test(notes) ? "Yes" : "No";
+    const gitlabLink = task.issue_web_url || task.web_url || "";
+    const owner = task.owner || "Unassigned";
+    const status = blockerFlag === "Yes"
+      ? "Blocked"
+      : owner === "Unassigned"
+        ? "Needs owner"
+        : dueDate
+          ? (gitlabLink ? "Synced" : "Ready")
+          : "Needs due date";
+    return {
+      actionId: task.task_id || `ACTION-${index + 1}`,
+      title: task.title || `Action ${index + 1}`,
+      decisionId: task.decision_id || "",
+      owner,
+      dueDate: dueDate || "Not inferred",
+      confidence: Number(task.priority_score || 0),
+      dependencies: notes || "None",
+      blockerFlag,
+      gitlabSync: gitlabLink ? "Synced" : "Not synced",
+      gitlabLink: gitlabLink || "Not synced",
+      status
+    };
+  });
+
+  const risks = [
+    ...bottlenecks.map((item, index) => ({
+      riskId: `BLOCKER-${index + 1}`,
+      category: "Blocker",
+      severity: "High",
+      description: String(item || ""),
+      followUp: "Resolve before closing linked execution item."
+    })),
+    ...riskSignals.map((item, index) => ({
+      riskId: item.risk_id || `RISK-${index + 1}`,
+      category: capitalize(String(item.kind || "risk").replace(/-/g, " ")),
+      severity: "Medium",
+      description: item.summary || item.kind || "Execution risk flagged.",
+      followUp: "Review and assign follow-through."
+    }))
+  ];
+
+  if (actions.some((item) => item.owner === "Unassigned")) {
+    risks.push({
+      riskId: "RISK-OWNER",
+      category: "Missing owner",
+      severity: "High",
+      description: "One or more action items do not yet have a named owner.",
+      followUp: "Assign an owner before the next checkpoint."
+    });
+  }
+  if (actions.some((item) => item.dueDate === "Not inferred")) {
+    risks.push({
+      riskId: "RISK-DATE",
+      category: "Missing deadline",
+      severity: "Medium",
+      description: "One or more action items are missing a clear due date.",
+      followUp: "Add due dates to operationalize follow-through."
+    });
+  }
+
+  const traceRows = traces.map((trace) => ({
+    traceId: trace.trace_id || "TRACE",
+    title: trace.title || "Trace",
+    owner: trace.owner || "Unassigned",
+    summary: trace.summary || "No summary available.",
+    nextSteps: (trace.next_steps || []).join(" | ") || "No next steps recorded",
+    artifacts: (trace.related_artifacts || []).join(", ") || "None",
+    linkedDecision: findLinkedDecisionId(trace, decisions)
+  }));
+
+  const stats = [
+    { label: "Decisions Captured", value: String(decisions.length), tone: "primary" },
+    { label: "Execution Actions", value: String(actions.length), tone: "success" },
+    { label: "Open Risks", value: String(risks.length), tone: "warning" },
+    { label: "Trace Links", value: String(traceRows.length), tone: "accent" }
+  ];
+
+  return { decisions, actions, risks, traces: traceRows, stats };
+}
+
+function findLinkedDecisionId(trace, decisions) {
+  const traceText = `${trace.title || ""} ${trace.summary || ""}`.toLowerCase();
+  const match = decisions.find((item) => traceText.includes(String(item.decisionId || "").toLowerCase()));
+  return match?.decisionId || "";
+}
+
+function inferDueDate(text) {
+  const lowered = String(text || "").toLowerCase();
+  const weekdays = {
+    monday: 1,
+    tuesday: 2,
+    wednesday: 3,
+    thursday: 4,
+    friday: 5,
+    saturday: 6,
+    sunday: 0
+  };
+  const explicit = lowered.match(/\b(\d{4}-\d{2}-\d{2})\b/);
+  if (explicit) {
+    return explicit[1];
+  }
+  const now = new Date();
+  for (const [day, value] of Object.entries(weekdays)) {
+    if (lowered.includes(day)) {
+      const copy = new Date(now);
+      let delta = (value - copy.getDay() + 7) % 7;
+      delta = delta === 0 ? 7 : delta;
+      copy.setDate(copy.getDate() + delta);
+      return copy.toISOString().slice(0, 10);
+    }
+  }
+  return "";
+}
+
+function renderGovernancePanel() {
+  const snapshot = document.getElementById("governanceSnapshot");
+  const decisionRegister = document.getElementById("decisionRegister");
+  const actionRegister = document.getElementById("actionRegister");
+  const riskRegister = document.getElementById("riskRegister");
+  const traceabilityRegister = document.getElementById("traceabilityRegister");
+  const decisionCount = document.getElementById("decisionRegisterCount");
+  const actionCount = document.getElementById("actionRegisterCount");
+  const riskCount = document.getElementById("riskRegisterCount");
+  const traceabilityCount = document.getElementById("traceabilityCount");
+  if (!snapshot || !decisionRegister || !actionRegister || !riskRegister || !traceabilityRegister) {
+    return;
+  }
+
+  if (!state.currentMeeting) {
+    snapshot.innerHTML = `<div class="empty-state">Open a processed meeting to inspect the structured governance view.</div>`;
+    decisionRegister.innerHTML = `<div class="empty-state">No decision register available.</div>`;
+    actionRegister.innerHTML = `<div class="empty-state">No action register available.</div>`;
+    riskRegister.innerHTML = `<div class="empty-state">No blockers or risks surfaced yet.</div>`;
+    traceabilityRegister.innerHTML = `<div class="empty-state">No traceability links available yet.</div>`;
+    decisionCount.textContent = "0 items";
+    actionCount.textContent = "0 items";
+    riskCount.textContent = "0 items";
+    traceabilityCount.textContent = "0 links";
+    return;
+  }
+
+  const model = buildGovernanceModel(state.currentMeeting);
+  snapshot.innerHTML = model.stats.map((item) => `
+    <article class="governance-stat ${item.tone}">
+      <span>${item.label}</span>
+      <strong>${escapeHtml(item.value)}</strong>
+    </article>
+  `).join("");
+
+  decisionCount.textContent = `${model.decisions.length} item${model.decisions.length === 1 ? "" : "s"}`;
+  actionCount.textContent = `${model.actions.length} item${model.actions.length === 1 ? "" : "s"}`;
+  riskCount.textContent = `${model.risks.length} item${model.risks.length === 1 ? "" : "s"}`;
+  traceabilityCount.textContent = `${model.traces.length} link${model.traces.length === 1 ? "" : "s"}`;
+
+  decisionRegister.innerHTML = model.decisions.length === 0
+    ? `<div class="empty-state">No decision register available.</div>`
+    : renderGovernanceTable(
+      ["Decision", "Owner", "Urgency", "Status", "Next Action"],
+      model.decisions.map((item) => [
+        `<div class="governance-cell-stack"><strong>${escapeHtml(item.decisionId)}</strong><span class="muted">${escapeHtml(item.title)}</span></div>`,
+        escapeHtml(item.owner),
+        `<span class="status-badge ${item.urgency.toLowerCase()}">${escapeHtml(item.urgency)}</span>`,
+        `<span class="status-badge neutral">${escapeHtml(item.status)}</span>`,
+        `<div class="governance-cell-stack"><span>${escapeHtml(item.nextAction)}</span><small class="muted">${escapeHtml(item.blockers)}</small></div>`
+      ])
+    );
+
+  actionRegister.innerHTML = model.actions.length === 0
+    ? `<div class="empty-state">No action register available.</div>`
+    : renderGovernanceTable(
+      ["Action", "Owner", "Due Date", "Status", "GitLab"],
+      model.actions.map((item) => [
+        `<div class="governance-cell-stack"><strong>${escapeHtml(item.actionId)}</strong><span class="muted">${escapeHtml(item.title)}</span></div>`,
+        escapeHtml(item.owner),
+        escapeHtml(item.dueDate),
+        `<span class="status-badge neutral">${escapeHtml(item.status)}</span>`,
+        `<div class="governance-cell-stack"><span>${escapeHtml(item.gitlabSync)}</span><small class="muted">${escapeHtml(item.decisionId || "No linked decision")}</small></div>`
+      ])
+    );
+
+  riskRegister.innerHTML = model.risks.length === 0
+    ? `<div class="empty-state">No blockers or risks surfaced yet.</div>`
+    : model.risks.map((item) => `
+      <article class="governance-note risk-${String(item.severity || "").toLowerCase()}">
+        <div class="governance-note-head">
+          <strong>${escapeHtml(item.riskId)}</strong>
+          <span class="status-badge ${String(item.severity || "").toLowerCase()}">${escapeHtml(item.severity)}</span>
+        </div>
+        <div class="muted">${escapeHtml(item.category)}</div>
+        <p>${escapeHtml(item.description)}</p>
+        <small class="muted">Follow-up: ${escapeHtml(item.followUp)}</small>
+      </article>
+    `).join("");
+
+  traceabilityRegister.innerHTML = model.traces.length === 0
+    ? `<div class="empty-state">No traceability links available yet.</div>`
+    : model.traces.map((item) => `
+      <article class="governance-note">
+        <div class="governance-note-head">
+          <strong>${escapeHtml(item.traceId)}</strong>
+          <span class="model-pill subtle">${escapeHtml(item.linkedDecision || "Unlinked trace")}</span>
+        </div>
+        <p>${escapeHtml(item.title)}</p>
+        <small class="muted">Owner: ${escapeHtml(item.owner)} | Next steps: ${escapeHtml(item.nextSteps)}</small>
+      </article>
+    `).join("");
+}
+
+function renderGovernanceTable(headers, rows) {
+  return `
+    <div class="governance-table">
+      <div class="governance-table-row governance-table-head">
+        ${headers.map((header) => `<span>${escapeHtml(header)}</span>`).join("")}
+      </div>
+      ${rows.map((row) => `
+        <div class="governance-table-row">
+          ${row.map((cell) => `<div class="governance-table-cell">${cell}</div>`).join("")}
+        </div>
+      `).join("")}
+    </div>
+  `;
 }
 
 function renderCvFeaturePanel() {

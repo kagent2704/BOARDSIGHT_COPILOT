@@ -665,6 +665,150 @@ textarea#chatQuestionInput {
   min-height: 140px;
 }
 .transcript-row { padding: 14px; border-radius: var(--radius-md); background: var(--surface-soft); display: grid; grid-template-columns: 120px 180px 1fr; gap: 12px; }
+.governance-panel {
+  padding: 18px;
+  display: grid;
+  gap: 16px;
+}
+.governance-snapshot-grid,
+.governance-grid {
+  display: grid;
+  gap: 12px;
+}
+.governance-snapshot-grid {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+.governance-grid {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+.governance-card {
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+}
+.governance-card h5 {
+  margin: 0;
+  font-size: 16px;
+}
+.panel-title-row.compact {
+  align-items: center;
+}
+.governance-stat {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+  padding: 14px;
+  display: grid;
+  gap: 8px;
+}
+.governance-stat span {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 700;
+}
+.governance-stat strong {
+  font-size: 28px;
+  line-height: 1;
+}
+.governance-stat.primary { box-shadow: inset 0 0 0 1px rgba(59,130,246,0.18); }
+.governance-stat.success { box-shadow: inset 0 0 0 1px rgba(34,197,94,0.18); }
+.governance-stat.warning { box-shadow: inset 0 0 0 1px rgba(245,158,11,0.18); }
+.governance-stat.accent { box-shadow: inset 0 0 0 1px rgba(168,85,247,0.18); }
+.governance-table-wrap {
+  overflow-x: auto;
+}
+.governance-table {
+  min-width: 100%;
+  display: grid;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.governance-table-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.3fr) minmax(110px, 0.8fr) minmax(90px, 0.6fr) minmax(110px, 0.7fr) minmax(210px, 1.4fr);
+  background: var(--surface-soft);
+}
+.governance-table-row:not(.governance-table-head) {
+  border-top: 1px solid var(--border);
+}
+.governance-table-head {
+  background: rgba(99,102,241,0.1);
+}
+.governance-table-head span {
+  padding: 12px 14px;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 700;
+}
+.governance-table-cell {
+  padding: 12px 14px;
+  display: flex;
+  align-items: flex-start;
+  min-width: 0;
+}
+.governance-cell-stack {
+  display: grid;
+  gap: 4px;
+}
+.governance-list {
+  display: grid;
+  gap: 10px;
+}
+.governance-note {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+  padding: 14px;
+}
+.governance-note p {
+  margin: 0;
+  line-height: 1.5;
+}
+.governance-note-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.risk-high { box-shadow: inset 0 0 0 1px rgba(220,38,38,0.18); }
+.risk-medium { box-shadow: inset 0 0 0 1px rgba(245,158,11,0.18); }
+.risk-low { box-shadow: inset 0 0 0 1px rgba(34,197,94,0.18); }
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+}
+.status-badge.high {
+  background: rgba(220,38,38,0.14);
+  color: #fca5a5;
+}
+.status-badge.medium {
+  background: rgba(245,158,11,0.14);
+  color: #fcd34d;
+}
+.status-badge.low {
+  background: rgba(34,197,94,0.14);
+  color: #86efac;
+}
+.status-badge.neutral {
+  background: rgba(99,102,241,0.12);
+  color: #c7d2fe;
+}
 .cv-feature-panel {
   padding: 18px;
   display: grid;
@@ -996,6 +1140,10 @@ body.popup-live-copilot #liveCopilotAnswer {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+.model-pill.subtle {
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--muted);
+}
 .upload-status { margin-top: 14px; color: var(--muted); }
 .settings-grid { grid-template-columns: 1fr 1fr; }
 .toggle-row { display: flex; justify-content: space-between; align-items: center; }
@@ -1061,6 +1209,7 @@ body.popup-live-copilot #liveCopilotAnswer {
   .meeting-pill { justify-self: start; }
   .sidebar { min-height: auto; border-right: 0; border-bottom: 1px solid var(--border); }
   .transcript-row { grid-template-columns: 1fr; }
+  .governance-table-row { grid-template-columns: 1fr; }
   .chat-message { max-width: 100%; }
   .cv-frame-head,
   .cv-lane-head,
