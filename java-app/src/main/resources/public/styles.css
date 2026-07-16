@@ -289,32 +289,36 @@ body:has(.landing-auth:not(.hidden)),
 .landing-orbital {
   position: relative;
   min-height: 470px;
+  filter: drop-shadow(0 0 42px rgba(99, 102, 241, 0.12));
 }
 
 .orbital-ring {
   position: absolute;
   inset: 50%;
   border-radius: 50%;
-  transform: translate(-50%, -50%);
+  transform: translate(-50%, -50%) rotate(-12deg) scaleY(0.78);
+  transform-origin: center;
 }
 
 .orbital-ring-outer {
   width: 500px;
   height: 500px;
-  border: 1px dashed rgba(113, 92, 255, 0.18);
-  box-shadow: 0 0 120px rgba(99, 102, 241, 0.12);
+  border: 1px dashed rgba(113, 92, 255, 0.16);
+  box-shadow:
+    0 0 120px rgba(99, 102, 241, 0.10),
+    inset 0 0 22px rgba(99, 102, 241, 0.06);
 }
 
 .orbital-ring-mid {
   width: 454px;
   height: 454px;
-  border: 1px dashed rgba(113, 92, 255, 0.14);
+  border: 1px dashed rgba(113, 92, 255, 0.12);
 }
 
 .orbital-ring-inner {
   width: 414px;
   height: 414px;
-  border: 1px solid rgba(151, 132, 255, 0.08);
+  border: 1px solid rgba(151, 132, 255, 0.09);
 }
 
 .orbital-star {
@@ -352,6 +356,40 @@ body:has(.landing-auth:not(.hidden)),
   box-shadow:
     inset 28px 0 44px rgba(132, 106, 255, 0.26),
     0 0 120px rgba(99, 102, 241, 0.24);
+  overflow: hidden;
+}
+
+.orbital-core::before {
+  content: "";
+  position: absolute;
+  inset: -3%;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 17% 18%, rgba(190, 175, 255, 0.96), rgba(149, 112, 255, 0.88) 16%, rgba(120, 88, 255, 0.34) 26%, transparent 36%);
+  filter: blur(7px);
+  opacity: 0.9;
+  mix-blend-mode: screen;
+}
+
+.orbital-core::after {
+  content: "";
+  position: absolute;
+  inset: -4%;
+  border-radius: 50%;
+  background:
+    conic-gradient(
+      from 210deg,
+      transparent 0deg 36deg,
+      rgba(169, 147, 255, 0.18) 48deg,
+      rgba(214, 205, 255, 0.92) 72deg,
+      rgba(138, 103, 255, 0.92) 90deg,
+      rgba(110, 79, 255, 0.34) 108deg,
+      transparent 126deg 360deg
+    );
+  mask: radial-gradient(circle, transparent 66%, #000 70%, #000 74%, transparent 78%);
+  -webkit-mask: radial-gradient(circle, transparent 66%, #000 70%, #000 74%, transparent 78%);
+  filter: blur(3px);
+  opacity: 0.95;
 }
 
 .orbital-kicker {
@@ -359,18 +397,24 @@ body:has(.landing-auth:not(.hidden)),
   letter-spacing: 0.24em;
   text-transform: uppercase;
   color: #a78bfa;
+  position: relative;
+  z-index: 1;
 }
 
 .orbital-core strong {
   font-size: 28px;
   line-height: 1.18;
   letter-spacing: -0.04em;
+  position: relative;
+  z-index: 1;
 }
 
 .orbital-divider {
   width: 100%;
   height: 1px;
   background: linear-gradient(90deg, transparent, rgba(200, 208, 255, 0.4), transparent);
+  position: relative;
+  z-index: 1;
 }
 
 .orbital-core small {
@@ -378,6 +422,8 @@ body:has(.landing-auth:not(.hidden)),
   gap: 16px;
   font-size: 12px;
   color: #d9d7eb;
+  position: relative;
+  z-index: 1;
 }
 
 .orbital-core small span {
