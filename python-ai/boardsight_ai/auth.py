@@ -13,7 +13,19 @@ from argon2.exceptions import InvalidHashError, VerifyMismatchError
 from boardsight_ai.database import execute, fetchone, is_postgres, table_columns
 
 
-PASSWORD_HASHER = PasswordHasher()
+def _env_int(name: str, default: int) -> int:
+    raw_value = str(os.getenv(name, str(default))).strip()
+    try:
+        return max(1, int(raw_value))
+    except ValueError:
+        return default
+
+
+PASSWORD_HASHER = PasswordHasher(
+    time_cost=_env_int("BOARDSIGHT_ARGON2_TIME_COST", 2),
+    memory_cost=_env_int("BOARDSIGHT_ARGON2_MEMORY_COST", 19456),
+    parallelism=_env_int("BOARDSIGHT_ARGON2_PARALLELISM", 1),
+)
 
 
 def _utcnow() -> datetime:
