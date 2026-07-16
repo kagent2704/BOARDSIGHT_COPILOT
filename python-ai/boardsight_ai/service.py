@@ -17,9 +17,9 @@ if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
 try:
-    from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+    from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
     from starlette.background import BackgroundTask
-    from fastapi.responses import FileResponse
+    from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
     import uvicorn
 except Exception as exc:  # pragma: no cover
     raise SystemExit(
@@ -204,6 +204,180 @@ def _verification_base_url(request: Request | None = None) -> str:
     return "http://localhost:8000"
 
 
+def _verification_return_url(request: Request | None = None) -> str:
+    base_url = _verification_base_url(request)
+    return f"{base_url}/"
+
+
+def _email_provider_is_configured() -> bool:
+    return bool(os.getenv("BOARDSIGHT_EMAIL_FROM", "").strip()) and bool(
+        (os.getenv("BOARDSIGHT_RESEND_API_KEY") or os.getenv("RESEND_API_KEY") or "").strip()
+    )
+
+
+def _send_verification_email_safe(*, to_email: str, display_name: str, verification_url: str) -> None:
+    try:
+        send_verification_email(
+            to_email=to_email,
+            display_name=display_name,
+            verification_url=verification_url,
+        )
+    except Exception:
+        pass
+
+
+def _render_verification_result_page(*, status: str, email: str, app_url: str, detail: str) -> HTMLResponse:
+    title = "Email Verified" if status == "verified" else "Verification Issue"
+    eyebrow = "BoardSight Account Ready" if status == "verified" else "Verification Needs Attention"
+    headline = (
+        "Your account is verified and ready to use."
+        if status == "verified"
+        else "This verification link is invalid or has expired."
+    )
+    tone_class = "verified" if status == "verified" else "error"
+    body_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{title} | BoardSight</title>
+  <meta http-equiv="refresh" content="4;url={app_url}">
+  <style>
+    :root {{
+      color-scheme: dark;
+      --bg: #080f19;
+      --surface: rgba(17, 24, 39, 0.92);
+      --border: rgba(145, 163, 255, 0.12);
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --primary: #6366f1;
+      --accent: #22d3ee;
+      --success: #22c55e;
+      --danger: #f97316;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      min-height: 100vh;
+      font-family: Inter, "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(99,102,241,0.18), transparent 28%),
+        radial-gradient(circle at bottom right, rgba(34,211,238,0.12), transparent 24%),
+        var(--bg);
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }}
+    .card {{
+      width: min(760px, 100%);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 28px;
+      padding: 32px;
+      box-shadow: 0 28px 80px rgba(0,0,0,0.32);
+      display: grid;
+      gap: 18px;
+    }}
+    .eyebrow {{
+      display: inline-flex;
+      width: fit-content;
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      background: rgba(99,102,241,0.14);
+      color: #c7d2fe;
+    }}
+    .status-dot {{
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: {"var(--success)" if status == "verified" else "var(--danger)"};
+      box-shadow: 0 0 0 8px {"rgba(34,197,94,0.12)" if status == "verified" else "rgba(249,115,22,0.12)"};
+    }}
+    .status-row {{
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }}
+    h1 {{
+      margin: 0;
+      font-size: clamp(34px, 4vw, 54px);
+      line-height: 1.02;
+      letter-spacing: -0.04em;
+    }}
+    p {{
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.7;
+      font-size: 16px;
+    }}
+    .detail {{
+      padding: 18px;
+      border-radius: 18px;
+      background: rgba(12, 20, 34, 0.68);
+      border: 1px solid var(--border);
+      display: grid;
+      gap: 8px;
+    }}
+    .email {{
+      color: var(--text);
+      font-weight: 700;
+    }}
+    .actions {{
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }}
+    .primary, .secondary {{
+      min-height: 48px;
+      padding: 12px 18px;
+      border-radius: 14px;
+      text-decoration: none;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }}
+    .primary {{
+      background: linear-gradient(135deg, var(--primary), #8b5cf6);
+      color: white;
+    }}
+    .secondary {{
+      border: 1px solid var(--border);
+      color: var(--text);
+      background: transparent;
+    }}
+  </style>
+</head>
+<body>
+  <main class="card">
+    <span class="eyebrow">{eyebrow}</span>
+    <div class="status-row">
+      <span class="status-dot"></span>
+      <div>
+        <h1>{headline}</h1>
+      </div>
+    </div>
+    <p>{detail}</p>
+    <div class="detail">
+      <strong class="email">{email or "BoardSight user"}</strong>
+      <p>You can return to BoardSight now. This page will automatically send you back in a few seconds.</p>
+    </div>
+    <div class="actions">
+      <a class="primary" href="{app_url}">Open BoardSight</a>
+      <a class="secondary" href="{app_url}?auth=signin">Go to Sign In</a>
+    </div>
+  </main>
+</body>
+</html>"""
+    return HTMLResponse(content=body_html)
+
+
 def _run_retention_maintenance() -> dict[str, object]:
     meeting_cleanup = cleanup_expired_data(
         MEETING_DB_PATH,
@@ -347,7 +521,7 @@ async def login(request: Request, payload: dict | None = None) -> dict:
 
 
 @app.post("/api/v1/auth/register")
-async def register(request: Request, payload: dict | None = None) -> dict:
+async def register(request: Request, background_tasks: BackgroundTasks, payload: dict | None = None) -> dict:
     request_payload = await _collect_request_payload(request, payload)
     username = str(request_payload.get("username", "")).strip()
     email = str(request_payload.get("email", "")).strip().lower()
@@ -375,35 +549,58 @@ async def register(request: Request, payload: dict | None = None) -> dict:
         raise HTTPException(status_code=500, detail="Unable to create account verification state.")
     raw_token = issue_email_verification_token(AUTH_DB_PATH, int(user["user_id"]), email)
     verification_url = f"{_verification_base_url(request)}/api/v1/auth/verify-email?token={raw_token}"
-    delivery = send_verification_email(
-        to_email=email,
-        display_name=display_name,
-        verification_url=verification_url,
-    )
+    if _email_provider_is_configured():
+        background_tasks.add_task(
+            _send_verification_email_safe,
+            to_email=email,
+            display_name=display_name,
+            verification_url=verification_url,
+        )
     return {
         "status": "verification_pending",
         "username": username,
         "email": email,
         "display_name": display_name,
         "role": role,
-        "verification_sent": bool(delivery.get("sent")),
-        "email_delivery": delivery,
+        "verification_sent": _email_provider_is_configured(),
+        "email_delivery": {
+            "sent": _email_provider_is_configured(),
+            "queued": _email_provider_is_configured(),
+            "reason": "" if _email_provider_is_configured() else "email_provider_not_configured",
+        },
     }
 
 
 @app.get("/api/v1/auth/verify-email")
-def verify_email(token: str) -> dict:
+def verify_email(token: str, request: Request):
+    accept_header = str(request.headers.get("accept") or "")
+    wants_json = "application/json" in accept_header and "text/html" not in accept_header
+    app_url = _verification_return_url(request)
     verified = verify_email_token(AUTH_DB_PATH, token)
     if verified is None:
-        raise HTTPException(status_code=400, detail="Verification token is invalid or has expired.")
-    return {
-        "status": "verified",
-        "email": verified["email"],
-    }
+        if wants_json:
+            raise HTTPException(status_code=400, detail="Verification token is invalid or has expired.")
+        return _render_verification_result_page(
+            status="error",
+            email="",
+            app_url=app_url,
+            detail="The verification link is invalid or has expired. Request a new verification email from the sign-in screen.",
+        )
+    if wants_json:
+        return {
+            "status": "verified",
+            "email": verified["email"],
+        }
+    return _render_verification_result_page(
+        status="verified",
+        email=str(verified["email"]),
+        app_url=app_url,
+        detail="Your email has been verified successfully. You can sign in to BoardSight and access your workspace now.",
+    )
 
 
 @app.post("/api/v1/auth/resend-verification")
-async def resend_verification(request: Request, payload: dict | None = None) -> dict:
+async def resend_verification(request: Request, background_tasks: BackgroundTasks, payload: dict | None = None) -> dict:
     request_payload = await _collect_request_payload(request, payload)
     identifier = str(request_payload.get("identifier", "") or request_payload.get("username", "") or request_payload.get("email", "")).strip()
     if not identifier:
@@ -415,16 +612,22 @@ async def resend_verification(request: Request, payload: dict | None = None) -> 
         return {"status": "already_verified", "email": user["email"]}
     raw_token = issue_email_verification_token(AUTH_DB_PATH, int(user["id"]), str(user["email"]))
     verification_url = f"{_verification_base_url(request)}/api/v1/auth/verify-email?token={raw_token}"
-    delivery = send_verification_email(
-        to_email=str(user["email"]),
-        display_name=str(user.get("display_name") or user.get("username") or "there"),
-        verification_url=verification_url,
-    )
+    if _email_provider_is_configured():
+        background_tasks.add_task(
+            _send_verification_email_safe,
+            to_email=str(user["email"]),
+            display_name=str(user.get("display_name") or user.get("username") or "there"),
+            verification_url=verification_url,
+        )
     return {
         "status": "verification_resent",
         "email": user["email"],
-        "verification_sent": bool(delivery.get("sent")),
-        "email_delivery": delivery,
+        "verification_sent": _email_provider_is_configured(),
+        "email_delivery": {
+            "sent": _email_provider_is_configured(),
+            "queued": _email_provider_is_configured(),
+            "reason": "" if _email_provider_is_configured() else "email_provider_not_configured",
+        },
     }
 
 
