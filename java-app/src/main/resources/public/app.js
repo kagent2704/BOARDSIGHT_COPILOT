@@ -626,6 +626,7 @@ function normalizeWorkflowDraft(rawDraft, meetingId) {
       handoffNotes: String(node?.handoffNotes || ""),
       acceptanceCriteria: String(node?.acceptanceCriteria || ""),
       decisionId: String(node?.decisionId || ""),
+      traceId: String(node?.traceId || ""),
       sourceStage: String(node?.sourceStage || ""),
       dueDate: String(node?.dueDate || ""),
       priority: String(node?.priority || "Medium")
@@ -1429,6 +1430,10 @@ function renderWorkflow() {
     </div>
     <div class="workflow-board">
       ${draft.nodes.map((node, index) => `
+        ${(() => {
+          const trace = findTraceForWorkflowNode(node, state.currentMeeting);
+          const detailBits = [node.decisionId || "", trace?.trace_id || "", node.dueDate ? `Due ${node.dueDate}` : ""].filter(Boolean);
+          return `
         <button type="button" class="workflow-card ${node.id === state.selectedWorkflowNodeId ? "is-selected" : ""} type-${escapeHtml(node.type)}" data-workflow-node-id="${escapeHtml(node.id)}">
           <span class="workflow-card-step">${String(index + 1).padStart(2, "0")}</span>
           <strong>${escapeHtml(node.title)}</strong>
@@ -1437,11 +1442,15 @@ function renderWorkflow() {
             <span>${escapeHtml(node.owner || "Unassigned")}</span>
           </div>
           <p>${escapeHtml(node.summary || "No summary recorded.")}</p>
+          ${node.description ? `<p class="workflow-card-detail">${escapeHtml(shorten(node.description, 140))}</p>` : ""}
+          ${detailBits.length ? `<div class="workflow-card-tags">${detailBits.map((item) => `<span class="workflow-tag">${escapeHtml(item)}</span>`).join("")}</div>` : ""}
           <div class="workflow-card-footer">
             <span class="status-badge neutral">${escapeHtml(node.status || "Draft")}</span>
             <small>${escapeHtml(node.decisionId || node.sourceStage || "Manual node")}</small>
           </div>
         </button>
+        `;
+        })()}
         ${index < draft.nodes.length - 1 ? `<div class="workflow-connector"><span></span></div>` : ""}
       `).join("")}
     </div>
@@ -1463,6 +1472,44 @@ function renderWorkflow() {
 
 function workflowStorageKey(meetingId) {
   return `boardsight-workflow-draft:${meetingId || "workspace"}`;
+}
+
+function buildTraceLookup(meeting) {
+  const traces = meeting?.decision_traces || [];
+  const lookup = new Map();
+  traces.forEach((trace) => {
+    if (trace?.trace_id) {
+      lookup.set(String(trace.trace_id), trace);
+      if (String(trace.trace_id).startsWith("TRACE-")) {
+        lookup.set(String(trace.trace_id).replace("TRACE-", "DM-"), trace);
+      }
+    }
+    (trace.execution_tasks || []).forEach((task) => {
+      if (task?.decision_id) {
+        lookup.set(String(task.decision_id), trace);
+      }
+    });
+  });
+  return lookup;
+}
+
+function findTraceForWorkflowNode(node, meeting) {
+  if (!node || !meeting) {
+    return null;
+  }
+  const traces = meeting.decision_traces || [];
+  const lookup = buildTraceLookup(meeting);
+  if (node.traceId && lookup.has(String(node.traceId))) {
+    return lookup.get(String(node.traceId));
+  }
+  if (node.decisionId && lookup.has(String(node.decisionId))) {
+    return lookup.get(String(node.decisionId));
+  }
+  const comparison = `${node.title || ""} ${node.summary || ""} ${node.description || ""}`.toLowerCase();
+  return traces.find((trace) => {
+    const traceText = `${trace.trace_id || ""} ${trace.title || ""} ${trace.summary || ""}`.toLowerCase();
+    return comparison && (traceText.includes(comparison.slice(0, 32)) || comparison.includes(traceText.slice(0, 32)));
+  }) || null;
 }
 
 function buildEditableWorkflowDraft(meeting, { forceReset = false } = {}) {
@@ -1487,6 +1534,7 @@ function buildEditableWorkflowDraft(meeting, { forceReset = false } = {}) {
   const stages = workflowModel.stages || [];
   const bottlenecks = workflowModel.bottlenecks || [];
   const decisions = meeting?.decision_moments || [];
+  const traceLookup = buildTraceLookup(meeting);
 
   const generatedNodes = [];
   generatedNodes.push({
@@ -1530,6 +1578,7 @@ function buildEditableWorkflowDraft(meeting, { forceReset = false } = {}) {
   prioritized.forEach((decision, index) => {
     const linkedTask = tasks.find((task) => String(task.decision_id || "") === String(decision.decision_id || ""));
     const linkedMoment = decisions.find((moment) => String(moment.event_id || "") === String(decision.decision_id || ""));
+    const linkedTrace = traceLookup.get(String(decision.decision_id || ""));
     generatedNodes.push({
       id: `node-decision-${index + 1}`,
       type: index === 0 ? "decision" : "approval",
@@ -1537,11 +1586,12 @@ function buildEditableWorkflowDraft(meeting, { forceReset = false } = {}) {
       owner: linkedTask?.owner || decision.speaker || linkedMoment?.speaker || "Unassigned",
       status: bottlenecks.length > 0 && index === 0 ? "Blocked" : "Ready",
       summary: linkedMoment?.text || decision.text || "Decision captured from the meeting.",
-      description: "This node represents a concrete decision or approval checkpoint that should drive downstream execution ownership.",
+      description: linkedTrace?.summary || "This node represents a concrete decision or approval checkpoint that should drive downstream execution ownership.",
       notes: `Priority ${formatMetric(decision.priority_score || 0)} | ${renderWorkflowReasoning(decision.reasoning || [])}`,
-      handoffNotes: "Ensure the exact decision text, owner, and urgency are explicit before finalizing.",
-      acceptanceCriteria: "Decision is unambiguous, traceable to meeting evidence, and linked to next action.",
+      handoffNotes: linkedTrace?.next_steps?.join(" | ") || "Ensure the exact decision text, owner, and urgency are explicit before finalizing.",
+      acceptanceCriteria: linkedTrace?.rationale?.join(" | ") || "Decision is unambiguous, traceable to meeting evidence, and linked to next action.",
       decisionId: decision.decision_id || "",
+      traceId: linkedTrace?.trace_id || "",
       sourceStage: "decision",
       dueDate: inferDueDate(`${linkedTask?.title || ""} ${linkedTask?.notes || ""}`),
       priority: Number(decision.priority_score || 0) >= 80 ? "High" : "Medium"
@@ -1556,9 +1606,10 @@ function buildEditableWorkflowDraft(meeting, { forceReset = false } = {}) {
         summary: linkedTask.notes || "Execution task derived from the workflow model.",
         description: "This node converts the captured decision into an operational follow-through step with an owner and sequencing.",
         notes: `Task type ${linkedTask.task_type || "workflow"} | Order ${linkedTask.execution_order || index + 1}`,
-        handoffNotes: "Clarify dependencies, timing, and external tooling before handing off execution.",
-        acceptanceCriteria: "Task has an owner, expected outcome, and enough detail for direct follow-through.",
+        handoffNotes: linkedTrace?.next_steps?.join(" | ") || "Clarify dependencies, timing, and external tooling before handing off execution.",
+        acceptanceCriteria: linkedTrace?.rationale?.join(" | ") || "Task has an owner, expected outcome, and enough detail for direct follow-through.",
         decisionId: linkedTask.decision_id || "",
+        traceId: linkedTrace?.trace_id || "",
         sourceStage: "execution",
         dueDate: inferDueDate(`${linkedTask.title || ""} ${linkedTask.notes || ""}`),
         priority: Number(linkedTask.priority_score || 0) >= 80 ? "High" : "Medium"
@@ -1634,6 +1685,7 @@ function renderWorkflowReasoning(reasoning) {
 
 function renderWorkflowPropertiesPanel(node, draft) {
   const linkedCount = draft.links.filter((link) => link.from === node.id || link.to === node.id).length;
+  const trace = findTraceForWorkflowNode(node, state.currentMeeting);
   return `
     <div class="workflow-property-form">
       <label>Workflow Overview
@@ -1676,6 +1728,13 @@ function renderWorkflowPropertiesPanel(node, draft) {
       <label>Acceptance Criteria
         <textarea rows="4" data-workflow-field="acceptanceCriteria">${escapeHtml(node.acceptanceCriteria || "")}</textarea>
       </label>
+      <div class="workflow-context-card">
+        <strong>Trace Context</strong>
+        <div class="speaker-row"><span>Linked Decision</span><strong>${escapeHtml(node.decisionId || "None")}</strong></div>
+        <div class="speaker-row"><span>Linked Trace</span><strong>${escapeHtml(trace?.trace_id || node.traceId || "None")}</strong></div>
+        <div class="speaker-row"><span>Next Step Signal</span><strong>${escapeHtml(trace?.next_steps?.[0] || "None recorded")}</strong></div>
+        <p class="muted">${escapeHtml(trace?.summary || "No decision trace context is linked to this node yet.")}</p>
+      </div>
       <div class="button-row">
         <button type="button" class="ghost-btn" id="workflowDuplicateBtn">Duplicate</button>
         <button type="button" class="ghost-btn" id="workflowDeleteBtn">Delete</button>
@@ -1743,6 +1802,7 @@ function addWorkflowNode(type) {
     handoffNotes: "",
     acceptanceCriteria: "",
     decisionId: "",
+    traceId: "",
     sourceStage: "manual",
     dueDate: "",
     priority: "Medium"

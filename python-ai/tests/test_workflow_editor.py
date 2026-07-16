@@ -28,6 +28,7 @@ def _sample_workflow_editor(meeting_id: int) -> dict:
                 "handoffNotes": "Hand off to reviewer after intake validation.",
                 "acceptanceCriteria": "Meeting is identified and transcript is available.",
                 "decisionId": "",
+                "traceId": "",
                 "sourceStage": "start",
                 "dueDate": "",
                 "priority": "Medium",
@@ -44,6 +45,7 @@ def _sample_workflow_editor(meeting_id: int) -> dict:
                 "handoffNotes": "Escalate unresolved blockers to the governance lead.",
                 "acceptanceCriteria": "Every decision has an owner or explicit escalation path.",
                 "decisionId": "DM-1",
+                "traceId": "TRACE-1",
                 "sourceStage": "review",
                 "dueDate": "2026-07-20",
                 "priority": "High",
@@ -85,6 +87,7 @@ def test_update_meeting_workflow_editor_persists_rich_fields(tmp_path: Path, sam
     assert payload["workflow_editor"]["nodes"][1]["description"].startswith("Review transcript evidence")
     assert payload["workflow_editor"]["nodes"][1]["handoffNotes"].startswith("Escalate unresolved blockers")
     assert payload["workflow_editor"]["nodes"][1]["acceptanceCriteria"].startswith("Every decision has an owner")
+    assert payload["workflow_editor"]["nodes"][1]["traceId"] == "TRACE-1"
 
 
 def test_update_meeting_workflow_api_saves_server_side_draft(tmp_path: Path, sample_pipeline_result, monkeypatch) -> None:
@@ -131,6 +134,7 @@ def test_update_meeting_workflow_api_saves_server_side_draft(tmp_path: Path, sam
     assert payload["status"] == "saved"
     assert payload["workflow_editor"]["nodes"][1]["description"].startswith("Review transcript evidence")
     assert payload["workflow_editor"]["meta"]["notes"] == "This workflow should stay editable after the first save."
+    assert payload["workflow_editor"]["nodes"][1]["traceId"] == "TRACE-1"
 
     stored = get_meeting_result(meeting_db, meeting_id, user_id=1)
     assert stored is not None

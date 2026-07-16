@@ -657,6 +657,12 @@ textarea#chatQuestionInput {
   color: var(--muted);
   line-height: 1.5;
 }
+.workflow-card-detail {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
 .workflow-card-meta,
 .workflow-card-footer {
   display: flex;
@@ -668,6 +674,20 @@ textarea#chatQuestionInput {
 .workflow-card-meta {
   color: var(--muted);
   font-size: 12px;
+}
+.workflow-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.workflow-tag {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(99,102,241,0.12);
+  color: var(--text);
+  border: 1px solid rgba(99,102,241,0.16);
+  font-size: 11px;
+  font-weight: 700;
 }
 .workflow-card.type-start { box-shadow: inset 0 0 0 1px rgba(34,197,94,0.16); }
 .workflow-card.type-approval { box-shadow: inset 0 0 0 1px rgba(59,130,246,0.16); }
@@ -701,6 +721,17 @@ textarea#chatQuestionInput {
 .workflow-property-form {
   display: grid;
   gap: 12px;
+}
+.workflow-context-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 14px;
+  background: rgba(15,23,42,0.3);
+  border: 1px solid var(--border);
+}
+.workflow-context-card strong {
+  color: var(--text);
 }
 .workflow-component-btn {
   width: 100%;

@@ -513,6 +513,7 @@ def _sanitize_workflow_editor_payload(payload: dict) -> dict:
                 "handoffNotes": str(raw_node.get("handoffNotes") or "").strip(),
                 "acceptanceCriteria": str(raw_node.get("acceptanceCriteria") or "").strip(),
                 "decisionId": str(raw_node.get("decisionId") or "").strip(),
+                "traceId": str(raw_node.get("traceId") or "").strip(),
                 "sourceStage": str(raw_node.get("sourceStage") or raw_node.get("stage") or "").strip(),
                 "dueDate": str(raw_node.get("dueDate") or "").strip(),
                 "priority": str(raw_node.get("priority") or "Medium").strip() or "Medium",
