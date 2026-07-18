@@ -32,7 +32,7 @@ const API_BASE = (() => {
   return origin.replace(/\/$/, "");
 })();
 
-const WORKFLOW_LAYOUT_VERSION = "2026-07-18-compact";
+const WORKFLOW_LAYOUT_VERSION = "2026-07-18-snake-two-column";
 
 function apiUrl(path) {
   if (!path) {
@@ -1597,29 +1597,32 @@ function renderWorkflow() {
 }
 
 function workflowCanvasHeight(draft) {
-  const maxY = draft.nodes.reduce((highest, node) => Math.max(highest, Number(node.y || 0)), 0);
-  return Math.max(520, maxY + 220);
+  const middleNodes = Math.max(0, draft.nodes.length - 2);
+  const middleRows = Math.max(1, Math.ceil(middleNodes / 2));
+  return Math.max(520, 140 + (middleRows * 190) + 170);
 }
 
 function workflowCanvasWidth() {
-  return 920;
+  return 780;
 }
 
 function defaultWorkflowPosition(node, index) {
   if (index === 0) {
-    return { x: 348, y: 28 };
+    return { x: 278, y: 32 };
   }
   if (node.type === "end") {
-    return { x: 348, y: 420 };
+    const middleIndex = Math.max(0, index - 1);
+    const middleRows = Math.max(1, Math.ceil(middleIndex / 2));
+    return { x: 278, y: 140 + (middleRows * 190) };
   }
   const middleIndex = Math.max(0, index - 1);
-  const row = Math.floor(middleIndex / 3);
-  const rowItems = [80, 348, 616];
+  const row = Math.floor(middleIndex / 2);
+  const rowItems = [86, 470];
   const isReverseRow = row % 2 === 1;
-  const col = middleIndex % 3;
+  const col = middleIndex % 2;
   return {
     x: isReverseRow ? rowItems[rowItems.length - 1 - col] : rowItems[col],
-    y: 168 + (row * 168)
+    y: 148 + (row * 190)
   };
 }
 
@@ -2101,7 +2104,7 @@ function addWorkflowNode(type) {
     sourceStage: "manual",
     dueDate: "",
     priority: "Medium",
-    x: 348,
+    x: 278,
     y: Math.max(48, ...state.workflowDraft.nodes.map((node) => Number(node.y || 0) + 146))
   };
   const endIndex = state.workflowDraft.nodes.findIndex((node) => node.type === "end");
