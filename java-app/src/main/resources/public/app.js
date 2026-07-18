@@ -32,6 +32,8 @@ const API_BASE = (() => {
   return origin.replace(/\/$/, "");
 })();
 
+const WORKFLOW_LAYOUT_VERSION = "2026-07-18-compact";
+
 function apiUrl(path) {
   if (!path) {
     return API_BASE;
@@ -445,7 +447,8 @@ function syncFloatingLauncher() {
     return;
   }
   const hasActiveSession = state.liveSession?.session?.status === "active";
-  floatingLiveLauncher.classList.toggle("hidden", !hasActiveSession || isLiveCopilotPopup);
+  const activeView = document.body.dataset.activeView || "";
+  floatingLiveLauncher.classList.toggle("hidden", !hasActiveSession || isLiveCopilotPopup || activeView === "workflow");
 }
 
 async function bootstrapSession() {
@@ -773,7 +776,8 @@ function normalizeWorkflowDraft(rawDraft, meetingId) {
       status: String(draft.meta?.status || "draft"),
       overview: String(draft.meta?.overview || ""),
       notes: String(draft.meta?.notes || ""),
-      savedAt: String(draft.meta?.savedAt || "")
+      savedAt: String(draft.meta?.savedAt || ""),
+      layoutVersion: String(draft.meta?.layoutVersion || "")
     }
   };
 }
@@ -1594,7 +1598,7 @@ function renderWorkflow() {
 
 function workflowCanvasHeight(draft) {
   const maxY = draft.nodes.reduce((highest, node) => Math.max(highest, Number(node.y || 0)), 0);
-  return Math.max(620, maxY + 220);
+  return Math.max(520, maxY + 220);
 }
 
 function workflowCanvasWidth() {
@@ -1602,31 +1606,20 @@ function workflowCanvasWidth() {
 }
 
 function defaultWorkflowPosition(node, index) {
-  const pattern = [
-    { x: 348, y: 32 },
-    { x: 64, y: 196 },
-    { x: 348, y: 196 },
-    { x: 632, y: 196 },
-    { x: 632, y: 388 },
-    { x: 348, y: 388 },
-    { x: 64, y: 388 },
-    { x: 348, y: 556 }
-  ];
-  if (pattern[index]) {
-    return pattern[index];
+  if (index === 0) {
+    return { x: 348, y: 28 };
   }
-  const laneByType = {
-    start: 348,
-    review: 64,
-    decision: 348,
-    approval: 632,
-    parallel: 632,
-    escalation: 64,
-    end: 348
-  };
+  if (node.type === "end") {
+    return { x: 348, y: 420 };
+  }
+  const middleIndex = Math.max(0, index - 1);
+  const row = Math.floor(middleIndex / 3);
+  const rowItems = [80, 348, 616];
+  const isReverseRow = row % 2 === 1;
+  const col = middleIndex % 3;
   return {
-    x: laneByType[node.type] ?? 348,
-    y: 32 + (index * 164)
+    x: isReverseRow ? rowItems[rowItems.length - 1 - col] : rowItems[col],
+    y: 168 + (row * 168)
   };
 }
 
@@ -1634,17 +1627,18 @@ function ensureWorkflowNodeLayout(draft) {
   if (!draft?.nodes?.length) {
     return;
   }
-  const lanes = new Map();
+  const shouldRelayout = draft.meta?.layoutVersion !== WORKFLOW_LAYOUT_VERSION;
   draft.nodes.forEach((node, index) => {
-    if (Number.isFinite(node.x) && Number.isFinite(node.y)) {
-      return;
+    if (shouldRelayout || !Number.isFinite(node.x) || !Number.isFinite(node.y)) {
+      const basePosition = defaultWorkflowPosition(node, index);
+      node.x = basePosition.x;
+      node.y = basePosition.y;
     }
-    const laneIndex = lanes.get(node.type) || 0;
-    const basePosition = defaultWorkflowPosition(node, index);
-    node.x = Number.isFinite(node.x) ? node.x : basePosition.x + (laneIndex % 2 === 0 ? 0 : 24);
-    node.y = Number.isFinite(node.y) ? node.y : basePosition.y + (laneIndex * 12);
-    lanes.set(node.type, laneIndex + 1);
   });
+  draft.meta = {
+    ...draft.meta,
+    layoutVersion: WORKFLOW_LAYOUT_VERSION
+  };
 }
 
 function workflowNodeRect(node) {
@@ -1973,7 +1967,8 @@ function buildEditableWorkflowDraft(meeting, { forceReset = false } = {}) {
       overview: workflowModel?.workflow_summary?.top_priority_decision
         ? `Top workflow signal: ${workflowModel.workflow_summary.top_priority_decision}`
         : "",
-      notes: bottlenecks.slice(0, 3).join(" | ")
+      notes: bottlenecks.slice(0, 3).join(" | "),
+      layoutVersion: WORKFLOW_LAYOUT_VERSION
     }
   };
 }

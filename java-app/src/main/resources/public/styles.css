@@ -1389,12 +1389,15 @@ textarea#chatQuestionInput {
 }
 .workflow-board-visual {
   display: block;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: hidden;
   padding-bottom: 0;
 }
 .workflow-map-shell {
   position: relative;
+  width: 100%;
   min-width: 920px;
+  max-width: 920px;
   border-radius: 22px;
   background:
     radial-gradient(circle at top, rgba(99,102,241,0.08), transparent 34%),
@@ -2006,7 +2009,7 @@ textarea#chatQuestionInput {
 #workflowProperties {
   display: grid;
   gap: 12px;
-  max-height: calc(100vh - 260px);
+  max-height: calc(100vh - 240px);
   overflow: auto;
   padding-right: 6px;
 }
@@ -2243,6 +2246,7 @@ body.popup-live-copilot #liveCopilotAnswer {
   }
   .workflow-map-shell {
     min-width: 860px;
+    max-width: 860px;
   }
 }
 
