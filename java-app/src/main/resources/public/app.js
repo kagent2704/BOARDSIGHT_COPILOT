@@ -10,6 +10,7 @@ const state = {
   currentMeeting: null,
   workflowDraft: null,
   selectedWorkflowNodeId: null,
+  workflowDrag: null,
   liveSession: null,
   sessionHasProcessed: false,
   authMode: "signin",
@@ -758,7 +759,9 @@ function normalizeWorkflowDraft(rawDraft, meetingId) {
       traceId: String(node?.traceId || ""),
       sourceStage: String(node?.sourceStage || ""),
       dueDate: String(node?.dueDate || ""),
-      priority: String(node?.priority || "Medium")
+      priority: String(node?.priority || "Medium"),
+      x: Number.isFinite(Number(node?.x)) ? Number(node.x) : null,
+      y: Number.isFinite(Number(node?.y)) ? Number(node.y) : null
     })),
     links: links.map((link) => ({
       from: String(link?.from || ""),
@@ -1538,6 +1541,7 @@ function renderWorkflow() {
 
   state.workflowDraft = state.workflowDraft || buildEditableWorkflowDraft(state.currentMeeting);
   const draft = state.workflowDraft;
+  ensureWorkflowNodeLayout(draft);
   const selectedNode = draft.nodes.find((node) => node.id === state.selectedWorkflowNodeId) || draft.nodes[0] || null;
   state.selectedWorkflowNodeId = selectedNode?.id || null;
 
@@ -1557,46 +1561,196 @@ function renderWorkflow() {
         <span class="model-pill subtle">${escapeHtml(draft.meta.status || "draft")}</span>
       </div>
     </div>
-    <div class="workflow-board">
-      ${draft.nodes.map((node, index) => `
-        ${(() => {
-          const trace = findTraceForWorkflowNode(node, state.currentMeeting);
-          const detailBits = [node.decisionId || "", trace?.trace_id || "", node.dueDate ? `Due ${node.dueDate}` : ""].filter(Boolean);
-          return `
-        <button type="button" class="workflow-card ${node.id === state.selectedWorkflowNodeId ? "is-selected" : ""} type-${escapeHtml(node.type)}" data-workflow-node-id="${escapeHtml(node.id)}">
-          <span class="workflow-card-step">${String(index + 1).padStart(2, "0")}</span>
-          <strong>${escapeHtml(node.title)}</strong>
-          <div class="workflow-card-meta">
-            <span>${escapeHtml(capitalize(node.type))}</span>
-            <span>${escapeHtml(node.owner || "Unassigned")}</span>
-          </div>
-          <p>${escapeHtml(node.summary || "No summary recorded.")}</p>
-          ${node.description ? `<p class="workflow-card-detail">${escapeHtml(shorten(node.description, 140))}</p>` : ""}
-          ${detailBits.length ? `<div class="workflow-card-tags">${detailBits.map((item) => `<span class="workflow-tag">${escapeHtml(item)}</span>`).join("")}</div>` : ""}
-          <div class="workflow-card-footer">
-            <span class="status-badge neutral">${escapeHtml(node.status || "Draft")}</span>
-            <small>${escapeHtml(node.decisionId || node.sourceStage || "Manual node")}</small>
-          </div>
-        </button>
-        `;
-        })()}
-        ${index < draft.nodes.length - 1 ? `<div class="workflow-connector"><span></span></div>` : ""}
-      `).join("")}
+    <div class="workflow-board workflow-board-visual">
+      <div class="workflow-map-shell">
+        <svg class="workflow-link-layer" viewBox="0 0 1000 ${workflowCanvasHeight(draft)}" preserveAspectRatio="none">
+          ${draft.links.map((link) => renderWorkflowLink(link, draft)).join("")}
+        </svg>
+        <div class="workflow-map" style="height:${workflowCanvasHeight(draft)}px;">
+          ${draft.nodes.map((node, index) => renderWorkflowNodeCard(node, index)).join("")}
+        </div>
+      </div>
     </div>
   `;
 
   workflowCanvas.querySelectorAll("[data-workflow-node-id]").forEach((button) => {
     button.addEventListener("click", () => {
+      if (button.dataset.dragMoved === "true") {
+        button.dataset.dragMoved = "false";
+        return;
+      }
       state.selectedWorkflowNodeId = button.dataset.workflowNodeId;
       renderWorkflow();
     });
   });
+  bindWorkflowCanvasInteractions(workflowCanvas, draft);
 
   workflowProperties.innerHTML = selectedNode
     ? renderWorkflowPropertiesPanel(selectedNode, draft)
     : `<div class="empty-state">Select a node to edit its workflow properties.</div>`;
 
   bindWorkflowPropertyInputs();
+}
+
+function workflowCanvasHeight(draft) {
+  const maxY = draft.nodes.reduce((highest, node) => Math.max(highest, Number(node.y || 0)), 0);
+  return Math.max(560, maxY + 220);
+}
+
+function defaultWorkflowPosition(node, index) {
+  const laneByType = {
+    start: 420,
+    review: 120,
+    decision: 380,
+    approval: 640,
+    parallel: 640,
+    escalation: 180,
+    end: 420
+  };
+  return {
+    x: laneByType[node.type] ?? 360,
+    y: 36 + (index * 146)
+  };
+}
+
+function ensureWorkflowNodeLayout(draft) {
+  if (!draft?.nodes?.length) {
+    return;
+  }
+  const lanes = new Map();
+  draft.nodes.forEach((node, index) => {
+    if (Number.isFinite(node.x) && Number.isFinite(node.y)) {
+      return;
+    }
+    const laneIndex = lanes.get(node.type) || 0;
+    const basePosition = defaultWorkflowPosition(node, index);
+    node.x = Number.isFinite(node.x) ? node.x : basePosition.x + (laneIndex % 2 === 0 ? 0 : 24);
+    node.y = Number.isFinite(node.y) ? node.y : basePosition.y + (laneIndex * 12);
+    lanes.set(node.type, laneIndex + 1);
+  });
+}
+
+function workflowNodeRect(node) {
+  return {
+    x: Number(node.x || 0),
+    y: Number(node.y || 0),
+    width: 248,
+    height: 172
+  };
+}
+
+function workflowNodeCenter(node) {
+  const rect = workflowNodeRect(node);
+  return {
+    x: rect.x + (rect.width / 2),
+    y: rect.y + (rect.height / 2)
+  };
+}
+
+function renderWorkflowNodeCard(node, index) {
+  const trace = findTraceForWorkflowNode(node, state.currentMeeting);
+  const detailBits = [node.decisionId || "", trace?.trace_id || "", node.dueDate ? `Due ${node.dueDate}` : ""].filter(Boolean);
+  const rect = workflowNodeRect(node);
+  return `
+    <button
+      type="button"
+      class="workflow-card workflow-card-floating ${node.id === state.selectedWorkflowNodeId ? "is-selected" : ""} type-${escapeHtml(node.type)}"
+      data-workflow-node-id="${escapeHtml(node.id)}"
+      style="left:${rect.x}px;top:${rect.y}px;"
+    >
+      <span class="workflow-card-step">${String(index + 1).padStart(2, "0")}</span>
+      <strong>${escapeHtml(node.title)}</strong>
+      <div class="workflow-card-meta">
+        <span>${escapeHtml(capitalize(node.type))}</span>
+        <span>${escapeHtml(node.owner || "Unassigned")}</span>
+      </div>
+      <p>${escapeHtml(node.summary || "No summary recorded.")}</p>
+      ${node.description ? `<p class="workflow-card-detail">${escapeHtml(shorten(node.description, 140))}</p>` : ""}
+      ${detailBits.length ? `<div class="workflow-card-tags">${detailBits.map((item) => `<span class="workflow-tag">${escapeHtml(item)}</span>`).join("")}</div>` : ""}
+      <div class="workflow-card-footer">
+        <span class="status-badge neutral">${escapeHtml(node.status || "Draft")}</span>
+        <small>${escapeHtml(node.decisionId || node.sourceStage || "Manual node")}</small>
+      </div>
+      <span class="workflow-card-grab">Drag to map</span>
+    </button>
+  `;
+}
+
+function renderWorkflowLink(link, draft) {
+  const fromNode = draft.nodes.find((node) => node.id === link.from);
+  const toNode = draft.nodes.find((node) => node.id === link.to);
+  if (!fromNode || !toNode) {
+    return "";
+  }
+  const start = workflowNodeCenter(fromNode);
+  const end = workflowNodeCenter(toNode);
+  const deltaX = Math.max(80, Math.abs(end.x - start.x) * 0.5);
+  const path = `M ${start.x} ${start.y} C ${start.x + deltaX} ${start.y}, ${end.x - deltaX} ${end.y}, ${end.x} ${end.y}`;
+  const labelX = (start.x + end.x) / 2;
+  const labelY = (start.y + end.y) / 2 - 12;
+  return `
+    <path class="workflow-link-path" d="${path}" />
+    <text class="workflow-link-label" x="${labelX}" y="${labelY}" text-anchor="middle">${escapeHtml(link.label || "next")}</text>
+  `;
+}
+
+function bindWorkflowCanvasInteractions(workflowCanvas, draft) {
+  workflowCanvas.querySelectorAll("[data-workflow-node-id]").forEach((button) => {
+    button.addEventListener("pointerdown", (event) => {
+      const nodeId = button.dataset.workflowNodeId;
+      const node = draft.nodes.find((item) => item.id === nodeId);
+      if (!node) {
+        return;
+      }
+      button.dataset.dragMoved = "false";
+      button.setPointerCapture(event.pointerId);
+      state.workflowDrag = {
+        nodeId,
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        originX: Number(node.x || 0),
+        originY: Number(node.y || 0)
+      };
+    });
+    button.addEventListener("pointermove", (event) => {
+      if (!state.workflowDrag || state.workflowDrag.pointerId !== event.pointerId || state.workflowDrag.nodeId !== button.dataset.workflowNodeId) {
+        return;
+      }
+      const node = draft.nodes.find((item) => item.id === state.workflowDrag.nodeId);
+      if (!node) {
+        return;
+      }
+      const deltaX = event.clientX - state.workflowDrag.startX;
+      const deltaY = event.clientY - state.workflowDrag.startY;
+      if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) {
+        button.dataset.dragMoved = "true";
+      }
+      node.x = Math.max(24, Math.min(728, Math.round(state.workflowDrag.originX + deltaX)));
+      node.y = Math.max(24, Math.round(state.workflowDrag.originY + deltaY));
+      button.style.left = `${node.x}px`;
+      button.style.top = `${node.y}px`;
+      const layer = workflowCanvas.querySelector(".workflow-link-layer");
+      if (layer) {
+        layer.setAttribute("viewBox", `0 0 1000 ${workflowCanvasHeight(draft)}`);
+        layer.innerHTML = draft.links.map((link) => renderWorkflowLink(link, draft)).join("");
+      }
+      const map = workflowCanvas.querySelector(".workflow-map");
+      if (map) {
+        map.style.height = `${workflowCanvasHeight(draft)}px`;
+      }
+    });
+    button.addEventListener("pointerup", (event) => {
+      if (state.workflowDrag?.pointerId === event.pointerId) {
+        state.selectedWorkflowNodeId = button.dataset.workflowNodeId;
+        state.workflowDrag = null;
+        renderWorkflow();
+      }
+    });
+    button.addEventListener("pointercancel", () => {
+      state.workflowDrag = null;
+    });
+  });
 }
 
 function workflowStorageKey(meetingId) {
@@ -1934,7 +2088,9 @@ function addWorkflowNode(type) {
     traceId: "",
     sourceStage: "manual",
     dueDate: "",
-    priority: "Medium"
+    priority: "Medium",
+    x: 360,
+    y: Math.max(48, ...state.workflowDraft.nodes.map((node) => Number(node.y || 0) + 146))
   };
   const endIndex = state.workflowDraft.nodes.findIndex((node) => node.type === "end");
   const insertAt = endIndex >= 0 ? endIndex : state.workflowDraft.nodes.length;
@@ -1956,7 +2112,9 @@ function duplicateWorkflowNode() {
   const clone = {
     ...source,
     id: `${source.id}-copy-${Date.now()}`,
-    title: `${source.title} Copy`
+    title: `${source.title} Copy`,
+    x: Number(source.x || 0) + 36,
+    y: Number(source.y || 0) + 36
   };
   state.workflowDraft.nodes.splice(index + 1, 0, clone);
   rebuildWorkflowLinks();
