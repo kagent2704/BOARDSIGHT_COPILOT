@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from boardsight_ai.auth import authenticate_user, create_user, get_user_by_username, hash_password, init_auth_storage
+from boardsight_ai.data_protection import encrypt_text
 from boardsight_ai.database import execute, fetchall, fetchone
 from boardsight_ai.models import PipelineResult, pipeline_result_from_dict
 from boardsight_ai.reporting import write_structured_reports
@@ -20,12 +21,12 @@ from boardsight_ai.storage import (
     init_storage,
     save_live_copilot_reply,
     save_meeting_result,
-    update_meeting_workflow_editor,
 )
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEMO_OUTPUT_ROOT = PROJECT_ROOT / "output" / "demo-mode"
+DEMO_TEMPLATE_ROOT = PROJECT_ROOT / "output" / "demo-mode"
+DEMO_OUTPUT_ROOT = PROJECT_ROOT / "output" / "demo-workspace"
 
 
 @dataclass(frozen=True)
@@ -94,7 +95,7 @@ def _upsert_demo_user(auth_db_path: Path) -> dict[str, Any]:
             display_name = :display_name,
             password_hash = :password_hash,
             role = 'admin',
-            email_verified = 1
+            email_verified = :email_verified
         WHERE LOWER(username) = LOWER(:username)
         """,
         {
@@ -102,6 +103,7 @@ def _upsert_demo_user(auth_db_path: Path) -> dict[str, Any]:
             "email": creds["email"],
             "display_name": creds["display_name"],
             "password_hash": hash_password(creds["password"]),
+            "email_verified": True,
         },
     )
     user = get_user_by_username(auth_db_path, creds["username"])
@@ -171,13 +173,19 @@ def _seed_demo_workspace(meeting_db_path: Path, demo_user: dict[str, Any]) -> di
     for index, spec in enumerate(_demo_meeting_specs()):
         output_dir = DEMO_OUTPUT_ROOT / spec.slug
         output_dir.mkdir(parents=True, exist_ok=True)
+        template_dir = DEMO_TEMPLATE_ROOT / spec.slug
+        if template_dir.exists():
+            shutil.copytree(template_dir, output_dir, dirs_exist_ok=True)
         result = pipeline_result_from_dict(spec.payload)
         result_file = output_dir / "boardsight_result.json"
-        result_file.write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
+        if not result_file.exists():
+            result_file.write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
         performance_report = result.metadata.get("performance_report") if isinstance(result.metadata, dict) else {}
-        if performance_report:
-            (output_dir / "performance_report.json").write_text(json.dumps(performance_report, indent=2), encoding="utf-8")
-        write_structured_reports(result, output_dir)
+        performance_report_path = output_dir / "performance_report.json"
+        if performance_report and not performance_report_path.exists():
+            performance_report_path.write_text(json.dumps(performance_report, indent=2), encoding="utf-8")
+        if not any((output_dir / name).exists() for name in ("structured_report.pdf", "structured_report.docx", "structured_report.xlsx")):
+            write_structured_reports(result, output_dir)
         meeting_id = save_meeting_result(
             meeting_db_path,
             result,
@@ -197,7 +205,20 @@ def _seed_demo_workspace(meeting_db_path: Path, demo_user: dict[str, Any]) -> di
             {"meeting_id": meeting_id, "run_name": spec.title.lower(), "created_at": spec.created_at},
         )
         if spec.workflow_editor is not None:
-            update_meeting_workflow_editor(meeting_db_path, meeting_id, spec.workflow_editor, user_id=user_id)
+            payload = result.to_dict()
+            payload["workflow_editor"] = spec.workflow_editor
+            execute(
+                meeting_db_path,
+                """
+                UPDATE meetings
+                SET result_json = :result_json
+                WHERE id = :meeting_id
+                """,
+                {
+                    "meeting_id": meeting_id,
+                    "result_json": encrypt_text(json.dumps(payload)),
+                },
+            )
         meeting_ids.append(meeting_id)
         if index == 0:
             featured_meeting_id = meeting_id
