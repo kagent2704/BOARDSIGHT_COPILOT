@@ -1563,7 +1563,7 @@ function renderWorkflow() {
     </div>
     <div class="workflow-board workflow-board-visual">
       <div class="workflow-map-shell">
-        <svg class="workflow-link-layer" viewBox="0 0 1000 ${workflowCanvasHeight(draft)}" preserveAspectRatio="none">
+        <svg class="workflow-link-layer" viewBox="0 0 ${workflowCanvasWidth()} ${workflowCanvasHeight(draft)}" preserveAspectRatio="none">
           ${draft.links.map((link) => renderWorkflowLink(link, draft)).join("")}
         </svg>
         <div class="workflow-map" style="height:${workflowCanvasHeight(draft)}px;">
@@ -1594,22 +1594,39 @@ function renderWorkflow() {
 
 function workflowCanvasHeight(draft) {
   const maxY = draft.nodes.reduce((highest, node) => Math.max(highest, Number(node.y || 0)), 0);
-  return Math.max(560, maxY + 220);
+  return Math.max(620, maxY + 220);
+}
+
+function workflowCanvasWidth() {
+  return 920;
 }
 
 function defaultWorkflowPosition(node, index) {
+  const pattern = [
+    { x: 348, y: 32 },
+    { x: 64, y: 196 },
+    { x: 348, y: 196 },
+    { x: 632, y: 196 },
+    { x: 632, y: 388 },
+    { x: 348, y: 388 },
+    { x: 64, y: 388 },
+    { x: 348, y: 556 }
+  ];
+  if (pattern[index]) {
+    return pattern[index];
+  }
   const laneByType = {
-    start: 420,
-    review: 120,
-    decision: 380,
-    approval: 640,
-    parallel: 640,
-    escalation: 180,
-    end: 420
+    start: 348,
+    review: 64,
+    decision: 348,
+    approval: 632,
+    parallel: 632,
+    escalation: 64,
+    end: 348
   };
   return {
-    x: laneByType[node.type] ?? 360,
-    y: 36 + (index * 146)
+    x: laneByType[node.type] ?? 348,
+    y: 32 + (index * 164)
   };
 }
 
@@ -1634,8 +1651,8 @@ function workflowNodeRect(node) {
   return {
     x: Number(node.x || 0),
     y: Number(node.y || 0),
-    width: 248,
-    height: 172
+    width: 224,
+    height: 162
   };
 }
 
@@ -1726,13 +1743,13 @@ function bindWorkflowCanvasInteractions(workflowCanvas, draft) {
       if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) {
         button.dataset.dragMoved = "true";
       }
-      node.x = Math.max(24, Math.min(728, Math.round(state.workflowDrag.originX + deltaX)));
+      node.x = Math.max(24, Math.min(workflowCanvasWidth() - workflowNodeRect(node).width - 24, Math.round(state.workflowDrag.originX + deltaX)));
       node.y = Math.max(24, Math.round(state.workflowDrag.originY + deltaY));
       button.style.left = `${node.x}px`;
       button.style.top = `${node.y}px`;
       const layer = workflowCanvas.querySelector(".workflow-link-layer");
       if (layer) {
-        layer.setAttribute("viewBox", `0 0 1000 ${workflowCanvasHeight(draft)}`);
+        layer.setAttribute("viewBox", `0 0 ${workflowCanvasWidth()} ${workflowCanvasHeight(draft)}`);
         layer.innerHTML = draft.links.map((link) => renderWorkflowLink(link, draft)).join("");
       }
       const map = workflowCanvas.querySelector(".workflow-map");
@@ -2089,7 +2106,7 @@ function addWorkflowNode(type) {
     sourceStage: "manual",
     dueDate: "",
     priority: "Medium",
-    x: 360,
+    x: 348,
     y: Math.max(48, ...state.workflowDraft.nodes.map((node) => Number(node.y || 0) + 146))
   };
   const endIndex = state.workflowDraft.nodes.findIndex((node) => node.type === "end");
@@ -3013,9 +3030,11 @@ function setView(viewName) {
   if (isLiveCopilotPopup) {
     viewName = "live";
   }
+  document.body.dataset.activeView = viewName;
   document.querySelectorAll(".nav-item").forEach((button) => button.classList.toggle("active", button.dataset.view === viewName));
   document.querySelectorAll(".content-view").forEach((view) => view.classList.add("hidden"));
   document.getElementById(`${viewName}View`).classList.remove("hidden");
+  syncFloatingLauncher();
 }
 
 function openReport(fileName) {

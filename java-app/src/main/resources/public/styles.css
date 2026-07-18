@@ -1262,6 +1262,12 @@ body[data-theme="light"] .meeting-impact {
   border-radius: var(--radius-md);
   width: 100%;
 }
+.workflow-canvas {
+  display: block;
+  place-items: unset;
+  min-height: 640px;
+  padding: 18px;
+}
 .live-control-grid, .live-grid {
   display: grid;
   gap: var(--grid-gap);
@@ -1388,7 +1394,7 @@ textarea#chatQuestionInput {
 }
 .workflow-map-shell {
   position: relative;
-  min-width: 1000px;
+  min-width: 920px;
   border-radius: 22px;
   background:
     radial-gradient(circle at top, rgba(99,102,241,0.08), transparent 34%),
@@ -1448,9 +1454,9 @@ textarea#chatQuestionInput {
 }
 .workflow-card-floating {
   position: absolute;
-  width: 248px;
-  min-width: 248px;
-  max-width: 248px;
+  width: 224px;
+  min-width: 224px;
+  max-width: 224px;
   z-index: 2;
   cursor: grab;
 }
@@ -1992,7 +1998,21 @@ textarea#chatQuestionInput {
 .timeline-tag.action { background: rgba(168,85,247,0.14); color: #d8b4fe; }
 .timeline-tag.risk { background: rgba(245,158,11,0.14); color: #fcd34d; }
 .timeline-tag.follow-up { background: rgba(34,197,94,0.14); color: #86efac; }
-.workflow-grid { grid-template-columns: 200px minmax(0, 1fr) 240px; }
+.workflow-grid { grid-template-columns: 210px minmax(0, 1fr) 340px; align-items: start; }
+#workflowView .property-card {
+  min-width: 0;
+  overflow: hidden;
+}
+#workflowProperties {
+  display: grid;
+  gap: 12px;
+  max-height: calc(100vh - 260px);
+  overflow: auto;
+  padding-right: 6px;
+}
+body[data-active-view="workflow"] .floating-live-launcher {
+  display: none !important;
+}
 .live-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .property-card,
 .summary-box,
@@ -2216,6 +2236,14 @@ body.popup-live-copilot #liveCopilotAnswer {
   .cv-lane-head,
   .cv-timeline-meta { flex-direction: column; align-items: flex-start; }
   .auth-switch { flex-direction: column; }
+}
+@media (max-width: 1440px) {
+  .workflow-grid {
+    grid-template-columns: 180px minmax(0, 1fr) 300px;
+  }
+  .workflow-map-shell {
+    min-width: 860px;
+  }
 }
 
 @media (max-width: 1400px) {
