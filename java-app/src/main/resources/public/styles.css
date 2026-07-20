@@ -169,9 +169,9 @@ body[data-theme="light"] .workspace-switcher-menu { background: #fff; }
   object-fit: contain;
 }
 .brand-wordmark-nav {
-  height: 72px;
-  max-width: min(520px, 46vw);
-  filter: drop-shadow(0 16px 34px rgba(37, 99, 235, 0.18));
+  height: 96px;
+  max-width: min(760px, 58vw);
+  filter: drop-shadow(0 18px 38px rgba(37, 99, 235, 0.22));
 }
 .brand-panel h1 { margin: 16px 0 8px; font-size: 26px; letter-spacing: -0.02em; }
 .tagline { font-size: 14px; line-height: 1.45; max-width: none; margin: 0; color: var(--muted); }
@@ -259,7 +259,7 @@ body:has(.landing-auth:not(.hidden)),
   display: inline-flex;
   align-items: center;
   gap: 14px;
-  min-height: 76px;
+  min-height: 104px;
   font-size: 24px;
   font-weight: 700;
   letter-spacing: -0.03em;
@@ -296,7 +296,14 @@ body:has(.landing-auth:not(.hidden)),
 }
 
 .landing-theme-btn {
-  display: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 136px;
+}
+
+body[data-theme="light"] .brand-wordmark-nav {
+  filter: drop-shadow(0 14px 28px rgba(37, 99, 235, 0.12));
 }
 
 .landing-hero {
@@ -2535,7 +2542,7 @@ body.popup-live-copilot #liveCopilotAnswer {
     padding: 22px 18px 16px;
   }
   .brand-wordmark-nav {
-    height: 48px;
-    max-width: min(340px, 72vw);
+    height: 64px;
+    max-width: min(440px, 78vw);
   }
 }
