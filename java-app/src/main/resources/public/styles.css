@@ -1170,10 +1170,11 @@ body[data-theme="light"] .auth-proof-card strong {
 }
 .upload-btn span { min-width: 0; width: auto; }
 .upload-action {
-  min-width: 108px;
+  min-width: 272px;
   width: auto;
-  padding-inline: 14px;
-  gap: 8px;
+  padding-inline: 18px;
+  gap: 10px;
+  justify-content: center;
 }
 .action-btn {
   display: inline-flex;
