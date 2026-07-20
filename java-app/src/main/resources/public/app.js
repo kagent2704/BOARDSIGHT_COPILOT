@@ -32,7 +32,7 @@ const API_BASE = (() => {
   return origin.replace(/\/$/, "");
 })();
 
-const WORKFLOW_LAYOUT_VERSION = "2026-07-18-snake-two-column";
+const WORKFLOW_LAYOUT_VERSION = "2026-07-20-adaptive-snake";
 
 function apiUrl(path) {
   if (!path) {
@@ -763,6 +763,7 @@ function normalizeWorkflowDraft(rawDraft, meetingId) {
       sourceStage: String(node?.sourceStage || ""),
       dueDate: String(node?.dueDate || ""),
       priority: String(node?.priority || "Medium"),
+      manualPosition: Boolean(node?.manualPosition),
       x: Number.isFinite(Number(node?.x)) ? Number(node.x) : null,
       y: Number.isFinite(Number(node?.y)) ? Number(node.y) : null
     })),
@@ -1545,7 +1546,8 @@ function renderWorkflow() {
 
   state.workflowDraft = state.workflowDraft || buildEditableWorkflowDraft(state.currentMeeting);
   const draft = state.workflowDraft;
-  ensureWorkflowNodeLayout(draft);
+  const layoutMetrics = buildWorkflowLayoutMetrics(draft);
+  ensureWorkflowNodeLayout(draft, layoutMetrics);
   const selectedNode = draft.nodes.find((node) => node.id === state.selectedWorkflowNodeId) || draft.nodes[0] || null;
   state.selectedWorkflowNodeId = selectedNode?.id || null;
 
@@ -1567,10 +1569,10 @@ function renderWorkflow() {
     </div>
     <div class="workflow-board workflow-board-visual">
       <div class="workflow-map-shell">
-        <svg class="workflow-link-layer" viewBox="0 0 ${workflowCanvasWidth()} ${workflowCanvasHeight(draft)}" preserveAspectRatio="none">
+        <svg class="workflow-link-layer" viewBox="0 0 ${layoutMetrics.width} ${layoutMetrics.height}" preserveAspectRatio="none">
           ${draft.links.map((link) => renderWorkflowLink(link, draft)).join("")}
         </svg>
-        <div class="workflow-map" style="height:${workflowCanvasHeight(draft)}px;">
+        <div class="workflow-map" style="height:${layoutMetrics.height}px;">
           ${draft.nodes.map((node, index) => renderWorkflowNodeCard(node, index)).join("")}
         </div>
       </div>
@@ -1587,7 +1589,7 @@ function renderWorkflow() {
       renderWorkflow();
     });
   });
-  bindWorkflowCanvasInteractions(workflowCanvas, draft);
+  bindWorkflowCanvasInteractions(workflowCanvas, draft, layoutMetrics);
 
   workflowProperties.innerHTML = selectedNode
     ? renderWorkflowPropertiesPanel(selectedNode, draft)
@@ -1596,46 +1598,93 @@ function renderWorkflow() {
   bindWorkflowPropertyInputs();
 }
 
-function workflowCanvasHeight(draft) {
+function buildWorkflowLayoutMetrics(draft) {
+  const viewportWidth = typeof window === "undefined" ? 1440 : window.innerWidth;
+  const estimatedCenterRail = Math.max(640, Math.min(1120, viewportWidth - 760));
+  const columnCount = estimatedCenterRail >= 760 ? 2 : 1;
+  const cardWidth = 312;
+  const cardHeight = 284;
+  const padding = columnCount === 2 ? 28 : 24;
+  const columnGap = columnCount === 2 ? Math.max(64, estimatedCenterRail - (cardWidth * 2) - (padding * 2)) : 0;
+  const startY = 34;
+  const bodyStartY = 150;
+  const rowGap = 212;
   const middleNodes = Math.max(0, draft.nodes.length - 2);
-  const middleRows = Math.max(1, Math.ceil(middleNodes / 2));
-  return Math.max(520, 140 + (middleRows * 190) + 170);
-}
-
-function workflowCanvasWidth() {
-  return 780;
-}
-
-function defaultWorkflowPosition(node, index) {
-  if (index === 0) {
-    return { x: 278, y: 32 };
-  }
-  if (node.type === "end") {
-    const middleIndex = Math.max(0, index - 1);
-    const middleRows = Math.max(1, Math.ceil(middleIndex / 2));
-    return { x: 278, y: 140 + (middleRows * 190) };
-  }
-  const middleIndex = Math.max(0, index - 1);
-  const row = Math.floor(middleIndex / 2);
-  const rowItems = [86, 470];
-  const isReverseRow = row % 2 === 1;
-  const col = middleIndex % 2;
+  const bodyRows = Math.max(1, Math.ceil(middleNodes / columnCount));
+  const height = Math.max(620, bodyStartY + (bodyRows * rowGap) + 160);
+  const width = Math.max(
+    estimatedCenterRail,
+    columnCount === 2
+      ? (padding * 2) + (cardWidth * 2) + columnGap
+      : (padding * 2) + cardWidth
+  );
   return {
-    x: isReverseRow ? rowItems[rowItems.length - 1 - col] : rowItems[col],
-    y: 148 + (row * 190)
+    width,
+    height,
+    columnCount,
+    cardWidth,
+    cardHeight,
+    padding,
+    columnGap,
+    startY,
+    bodyStartY,
+    rowGap,
+    centerX: Math.round((width - cardWidth) / 2)
   };
 }
 
-function ensureWorkflowNodeLayout(draft) {
+function defaultWorkflowPosition(node, index, draft, metrics) {
+  if (index === 0) {
+    return { x: metrics.centerX, y: metrics.startY };
+  }
+  if (node.type === "end") {
+    const middleNodes = Math.max(0, draft.nodes.length - 2);
+    const bodyRows = Math.max(1, Math.ceil(middleNodes / metrics.columnCount));
+    return { x: metrics.centerX, y: metrics.bodyStartY + (bodyRows * metrics.rowGap) };
+  }
+  const middleIndex = Math.max(0, index - 1);
+  const row = Math.floor(middleIndex / metrics.columnCount);
+  const col = middleIndex % metrics.columnCount;
+  if (metrics.columnCount === 1) {
+    return {
+      x: metrics.centerX,
+      y: metrics.bodyStartY + (row * metrics.rowGap)
+    };
+  }
+  const rowItems = [
+    metrics.padding,
+    metrics.width - metrics.padding - metrics.cardWidth
+  ];
+  const isReverseRow = row % 2 === 1;
+  return {
+    x: isReverseRow ? rowItems[rowItems.length - 1 - col] : rowItems[col],
+    y: metrics.bodyStartY + (row * metrics.rowGap)
+  };
+}
+
+function ensureWorkflowNodeLayout(draft, metrics) {
   if (!draft?.nodes?.length) {
     return;
   }
-  const shouldRelayout = draft.meta?.layoutVersion !== WORKFLOW_LAYOUT_VERSION;
+  const isOutOfBounds = draft.nodes.some((node) => {
+    if (!Number.isFinite(node.x) || !Number.isFinite(node.y)) {
+      return true;
+    }
+    const maxX = metrics.width - metrics.cardWidth - metrics.padding;
+    return node.x < (metrics.padding - 8) || node.x > (maxX + 8) || node.y < 0;
+  });
+  const shouldRelayout = draft.meta?.layoutVersion !== WORKFLOW_LAYOUT_VERSION || isOutOfBounds;
   draft.nodes.forEach((node, index) => {
-    if (shouldRelayout || !Number.isFinite(node.x) || !Number.isFinite(node.y)) {
-      const basePosition = defaultWorkflowPosition(node, index);
+    if (shouldRelayout || !node.manualPosition || !Number.isFinite(node.x) || !Number.isFinite(node.y)) {
+      const basePosition = defaultWorkflowPosition(node, index, draft, metrics);
       node.x = basePosition.x;
       node.y = basePosition.y;
+      if (shouldRelayout) {
+        node.manualPosition = false;
+      }
+    } else {
+      node.x = Math.max(metrics.padding, Math.min(metrics.width - metrics.cardWidth - metrics.padding, Math.round(node.x)));
+      node.y = Math.max(metrics.startY, Math.round(node.y));
     }
   });
   draft.meta = {
@@ -1648,8 +1697,8 @@ function workflowNodeRect(node) {
   return {
     x: Number(node.x || 0),
     y: Number(node.y || 0),
-    width: 224,
-    height: 162
+    width: 312,
+    height: 284
   };
 }
 
@@ -1708,7 +1757,7 @@ function renderWorkflowLink(link, draft) {
   `;
 }
 
-function bindWorkflowCanvasInteractions(workflowCanvas, draft) {
+function bindWorkflowCanvasInteractions(workflowCanvas, draft, layoutMetrics) {
   workflowCanvas.querySelectorAll("[data-workflow-node-id]").forEach((button) => {
     button.addEventListener("pointerdown", (event) => {
       const nodeId = button.dataset.workflowNodeId;
@@ -1740,18 +1789,19 @@ function bindWorkflowCanvasInteractions(workflowCanvas, draft) {
       if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) {
         button.dataset.dragMoved = "true";
       }
-      node.x = Math.max(24, Math.min(workflowCanvasWidth() - workflowNodeRect(node).width - 24, Math.round(state.workflowDrag.originX + deltaX)));
-      node.y = Math.max(24, Math.round(state.workflowDrag.originY + deltaY));
+      node.manualPosition = true;
+      node.x = Math.max(layoutMetrics.padding, Math.min(layoutMetrics.width - workflowNodeRect(node).width - layoutMetrics.padding, Math.round(state.workflowDrag.originX + deltaX)));
+      node.y = Math.max(layoutMetrics.startY, Math.min(layoutMetrics.height - workflowNodeRect(node).height - 24, Math.round(state.workflowDrag.originY + deltaY)));
       button.style.left = `${node.x}px`;
       button.style.top = `${node.y}px`;
       const layer = workflowCanvas.querySelector(".workflow-link-layer");
       if (layer) {
-        layer.setAttribute("viewBox", `0 0 ${workflowCanvasWidth()} ${workflowCanvasHeight(draft)}`);
+        layer.setAttribute("viewBox", `0 0 ${layoutMetrics.width} ${layoutMetrics.height}`);
         layer.innerHTML = draft.links.map((link) => renderWorkflowLink(link, draft)).join("");
       }
       const map = workflowCanvas.querySelector(".workflow-map");
       if (map) {
-        map.style.height = `${workflowCanvasHeight(draft)}px`;
+        map.style.height = `${layoutMetrics.height}px`;
       }
     });
     button.addEventListener("pointerup", (event) => {
@@ -2104,8 +2154,9 @@ function addWorkflowNode(type) {
     sourceStage: "manual",
     dueDate: "",
     priority: "Medium",
-    x: 278,
-    y: Math.max(48, ...state.workflowDraft.nodes.map((node) => Number(node.y || 0) + 146))
+    manualPosition: false,
+    x: null,
+    y: null
   };
   const endIndex = state.workflowDraft.nodes.findIndex((node) => node.type === "end");
   const insertAt = endIndex >= 0 ? endIndex : state.workflowDraft.nodes.length;
@@ -2128,8 +2179,9 @@ function duplicateWorkflowNode() {
     ...source,
     id: `${source.id}-copy-${Date.now()}`,
     title: `${source.title} Copy`,
-    x: Number(source.x || 0) + 36,
-    y: Number(source.y || 0) + 36
+    manualPosition: false,
+    x: null,
+    y: null
   };
   state.workflowDraft.nodes.splice(index + 1, 0, clone);
   rebuildWorkflowLinks();

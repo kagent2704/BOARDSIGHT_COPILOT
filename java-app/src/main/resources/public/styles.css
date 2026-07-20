@@ -1385,20 +1385,20 @@ textarea#chatQuestionInput {
   align-items: stretch;
   gap: 14px;
   overflow: auto;
-  padding-bottom: 8px;
+  padding: 0 4px 8px;
 }
 .workflow-board-visual {
   display: block;
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow: auto hidden;
   padding-bottom: 0;
 }
 .workflow-map-shell {
   position: relative;
-  width: min(100%, 780px);
-  min-width: 780px;
-  max-width: 780px;
+  width: 100%;
+  min-width: 0;
+  max-width: 1120px;
   margin: 0 auto;
+  padding: 28px;
   border-radius: 22px;
   background:
     radial-gradient(circle at top, rgba(99,102,241,0.08), transparent 34%),
@@ -1419,7 +1419,7 @@ textarea#chatQuestionInput {
 }
 .workflow-map {
   position: relative;
-  min-height: 560px;
+  min-height: 620px;
 }
 .workflow-link-layer {
   position: absolute;
@@ -1444,23 +1444,25 @@ textarea#chatQuestionInput {
   text-transform: uppercase;
 }
 .workflow-card {
-  min-width: 260px;
-  max-width: 260px;
+  min-width: 312px;
+  max-width: 312px;
+  min-height: 284px;
   padding: 16px;
   border-radius: 18px;
   border: 1px solid var(--border);
   background: var(--surface-soft);
   color: var(--text);
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
   text-align: left;
   box-shadow: none;
 }
 .workflow-card-floating {
   position: absolute;
-  width: 224px;
-  min-width: 224px;
-  max-width: 224px;
+  width: 312px;
+  min-width: 312px;
+  max-width: 312px;
   z-index: 2;
   cursor: grab;
 }
@@ -1483,10 +1485,20 @@ textarea#chatQuestionInput {
   font-size: 16px;
   line-height: 1.35;
 }
+.workflow-card-meta,
+.workflow-card-tags,
+.workflow-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 .workflow-card-grab {
   display: inline-flex;
   align-items: center;
   width: fit-content;
+  margin-top: auto;
   padding: 6px 10px;
   border-radius: 999px;
   background: rgba(99, 102, 241, 0.08);
@@ -2002,17 +2014,20 @@ textarea#chatQuestionInput {
 .timeline-tag.action { background: rgba(168,85,247,0.14); color: #d8b4fe; }
 .timeline-tag.risk { background: rgba(245,158,11,0.14); color: #fcd34d; }
 .timeline-tag.follow-up { background: rgba(34,197,94,0.14); color: #86efac; }
-.workflow-grid { grid-template-columns: 210px minmax(0, 1fr) 340px; align-items: start; }
+.workflow-grid { grid-template-columns: 190px minmax(0, 1fr) minmax(320px, 360px); align-items: start; }
 #workflowView .property-card {
   min-width: 0;
   overflow: hidden;
+  position: sticky;
+  top: 18px;
+  align-self: start;
 }
 #workflowProperties {
   display: grid;
   gap: 12px;
-  max-height: calc(100vh - 240px);
+  max-height: calc(100vh - 250px);
   overflow: auto;
-  padding-right: 6px;
+  padding-right: 8px;
 }
 body[data-active-view="workflow"] .floating-live-launcher {
   display: none !important;
@@ -2243,12 +2258,10 @@ body.popup-live-copilot #liveCopilotAnswer {
 }
 @media (max-width: 1440px) {
   .workflow-grid {
-    grid-template-columns: 180px minmax(0, 1fr) 300px;
+    grid-template-columns: 176px minmax(0, 1fr) minmax(280px, 320px);
   }
   .workflow-map-shell {
-    width: min(100%, 780px);
-    min-width: 780px;
-    max-width: 780px;
+    max-width: 980px;
   }
 }
 
