@@ -83,15 +83,15 @@ body {
 }
 .brand-copy { display: flex; align-items: center; gap: 14px; }
 .brand-mark {
-  width: 56px;
-  height: 56px;
+  width: 60px;
+  height: 60px;
   display: block;
   object-fit: contain;
   filter: drop-shadow(0 16px 34px rgba(29, 78, 216, 0.20));
 }
 .brand-mark.small {
-  width: 28px;
-  height: 28px;
+  width: 36px;
+  height: 36px;
   filter: none;
 }
 .brand-wordmark {
@@ -101,8 +101,8 @@ body {
   object-fit: contain;
 }
 .brand-wordmark-nav {
-  height: 42px;
-  max-width: min(260px, 32vw);
+  height: 60px;
+  max-width: min(460px, 42vw);
   filter: drop-shadow(0 12px 28px rgba(29, 78, 216, 0.14));
 }
 .brand-panel h1 { margin: 16px 0 8px; font-size: 26px; letter-spacing: -0.02em; }
@@ -190,7 +190,8 @@ body:has(.landing-auth:not(.hidden)),
 .landing-brand {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 14px;
+  min-height: 64px;
   font-size: 24px;
   font-weight: 700;
   letter-spacing: -0.03em;
@@ -1094,8 +1095,8 @@ body[data-theme="light"] .notification-item {
   margin-bottom: 8px;
 }
 .sidebar-brand .brand-mark.small {
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
 }
 .nav-group { display: grid; gap: 8px; }
 .nav-label { font-size: 11px; text-transform: uppercase; color: var(--muted); margin: 8px 0 4px; }
@@ -2466,7 +2467,7 @@ body.popup-live-copilot #liveCopilotAnswer {
     padding: 22px 18px 16px;
   }
   .brand-wordmark-nav {
-    height: 34px;
-    max-width: min(220px, 58vw);
+    height: 42px;
+    max-width: min(280px, 68vw);
   }
 }
