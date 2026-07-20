@@ -95,7 +95,9 @@ from boardsight_ai.workspaces import (
     init_workspace_storage,
     list_workspace_members,
     list_workspaces_for_user,
+    plan_catalog,
     release_minutes,
+    request_subscription_change,
     reserve_minutes,
     set_subscription,
     update_member,
@@ -904,6 +906,12 @@ def workspaces(request: Request) -> dict:
     return {"items": [_workspace_payload(item) for item in items]}
 
 
+@app.get("/api/v1/plans")
+def pricing_plans(request: Request) -> dict:
+    _require_session_user(request)
+    return {"currency": "INR", "items": plan_catalog()}
+
+
 @app.post("/api/v1/workspaces")
 async def create_workspace_endpoint(request: Request, payload: dict | None = None) -> dict:
     user = _require_session_user(request)
@@ -987,6 +995,27 @@ def workspace_usage(organization_id: int, request: Request) -> dict:
     if workspace is None:
         raise HTTPException(status_code=404, detail="Workspace was not found for this account.")
     return {"usage": usage_summary(MEETING_DB_PATH, organization_id)}
+
+
+@app.post("/api/v1/workspaces/{organization_id}/subscription-change-requests")
+async def request_workspace_subscription_change(organization_id: int, request: Request, payload: dict | None = None) -> dict:
+    user = _require_session_user(request)
+    workspace = get_workspace_for_user(MEETING_DB_PATH, organization_id, int(user["user_id"]))
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace was not found for this account.")
+    try:
+        assert_workspace_access(workspace, require_admin=True)
+        request_payload = await _collect_request_payload(request, payload)
+        change_request = request_subscription_change(
+            MEETING_DB_PATH,
+            organization_id,
+            int(user["user_id"]),
+            str(request_payload.get("plan_code") or ""),
+            str(request_payload.get("billing_cycle") or "monthly"),
+        )
+    except (ValueError, PermissionError) as exc:
+        raise HTTPException(status_code=400 if isinstance(exc, ValueError) else 403, detail=str(exc)) from exc
+    return {"status": "pending", "request": change_request}
 
 
 @app.put("/api/v1/admin/workspaces/{organization_id}/subscription")

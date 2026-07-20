@@ -14,6 +14,7 @@ from boardsight_ai.workspaces import (
     ensure_personal_workspace,
     get_workspace_for_user,
     release_minutes,
+    request_subscription_change,
     reserve_minutes,
     update_member,
     usage_summary,
@@ -124,6 +125,20 @@ def test_viewer_cannot_be_activated_past_seat_limit(tmp_path) -> None:
     assert get_workspace_for_user(db_path, workspace_id, 4)["membership_role"] == "viewer"
 
 
+def test_subscription_change_request_is_idempotent(tmp_path) -> None:
+    db_path = tmp_path / "billing.db"
+    owner = _user(1, "owner@example.com")
+    workspace = ensure_personal_workspace(db_path, owner)
+
+    first = request_subscription_change(db_path, int(workspace["id"]), 1, "starter", "annual")
+    duplicate = request_subscription_change(db_path, int(workspace["id"]), 1, "starter", "annual")
+
+    assert first["id"] == duplicate["id"]
+    assert first["current_plan_code"] == "personal"
+    assert first["requested_plan_code"] == "starter"
+    assert first["status"] == "pending"
+
+
 def test_workspace_api_creates_personal_and_team_workspaces(tmp_path, monkeypatch) -> None:
     auth_db = tmp_path / "auth.db"
     meeting_db = tmp_path / "meetings.db"
@@ -147,8 +162,19 @@ def test_workspace_api_creates_personal_and_team_workspaces(tmp_path, monkeypatc
 
     team_headers = {**headers, "X-BoardSight-Workspace-ID": str(team["id"])}
     members_response = client.get(f"/api/v1/workspaces/{team['id']}/members", headers=team_headers)
+    plans_response = client.get("/api/v1/plans", headers=headers)
+    change_response = client.post(
+        f"/api/v1/workspaces/{team['id']}/subscription-change-requests",
+        headers=team_headers,
+        json={"plan_code": "growth", "billing_cycle": "monthly"},
+    )
     assert members_response.status_code == 200
     assert members_response.json()["items"][0]["email"] == "owner@example.com"
+    assert plans_response.status_code == 200
+    assert plans_response.json()["currency"] == "INR"
+    assert plans_response.json()["items"][1]["monthly_price_inr"] == 499
+    assert change_response.status_code == 200
+    assert change_response.json()["request"]["requested_plan_code"] == "growth"
 
 
 def test_registration_cannot_self_assign_global_admin(tmp_path, monkeypatch) -> None:

@@ -18,6 +18,13 @@ PLAN_ENTITLEMENTS: dict[str, dict[str, int]] = {
     "custom": {"licensed_members": 1000000, "monthly_minutes": 1000000000, "retention_days": 365},
 }
 
+PLAN_PRICING: dict[str, dict[str, Any]] = {
+    "personal": {"name": "Personal", "monthly_price_inr": 199, "annual_price_inr": 1990, "additional_member_price_inr": None, "overage_price_inr": 0.50},
+    "starter": {"name": "Starter Workspace", "monthly_price_inr": 499, "annual_price_inr": 4990, "additional_member_price_inr": 99, "overage_price_inr": 0.50},
+    "growth": {"name": "Growth Workspace", "monthly_price_inr": 999, "annual_price_inr": 9990, "additional_member_price_inr": 99, "overage_price_inr": 0.50},
+    "custom": {"name": "Custom", "monthly_price_inr": None, "annual_price_inr": None, "additional_member_price_inr": None, "overage_price_inr": None},
+}
+
 WORKSPACE_ROLES = {"owner", "admin", "member", "viewer"}
 LICENSED_ROLES = {"owner", "admin", "member"}
 
@@ -130,6 +137,22 @@ def init_workspace_storage(database_path: Path) -> None:
     execute(
         database_path,
         f"""
+        CREATE TABLE IF NOT EXISTS subscription_change_requests (
+            id {id_type},
+            organization_id {user_id_type} NOT NULL,
+            requested_by_user_id {user_id_type} NOT NULL,
+            current_plan_code TEXT NOT NULL,
+            requested_plan_code TEXT NOT NULL,
+            billing_cycle TEXT NOT NULL DEFAULT 'monthly',
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at {timestamp_type} DEFAULT CURRENT_TIMESTAMP,
+            resolved_at {timestamp_type}
+        )
+        """,
+    )
+    execute(
+        database_path,
+        f"""
         CREATE TABLE IF NOT EXISTS organization_integrations (
             id {id_type},
             organization_id {user_id_type} NOT NULL,
@@ -165,6 +188,7 @@ def init_workspace_storage(database_path: Path) -> None:
     )
     execute(database_path, "CREATE INDEX IF NOT EXISTS idx_org_members_user ON organization_members(user_id)")
     execute(database_path, "CREATE INDEX IF NOT EXISTS idx_usage_org_created ON usage_events(organization_id, created_at)")
+    execute(database_path, "CREATE INDEX IF NOT EXISTS idx_subscription_requests_org ON subscription_change_requests(organization_id, created_at)")
 
     for plan_code, entitlements in PLAN_ENTITLEMENTS.items():
         existing = fetchone(database_path, "SELECT plan_code FROM plan_entitlements WHERE plan_code = :plan_code", {"plan_code": plan_code})
@@ -200,6 +224,13 @@ def _unique_slug(database_path: Path, base: str) -> str:
         suffix += 1
         candidate = f"{_slugify(base)[:40]}-{suffix}"
     return candidate
+
+
+def plan_catalog() -> list[dict[str, Any]]:
+    return [
+        {"plan_code": plan_code, **PLAN_PRICING[plan_code], **entitlements}
+        for plan_code, entitlements in PLAN_ENTITLEMENTS.items()
+    ]
 
 
 def ensure_personal_workspace(database_path: Path, user: dict[str, Any]) -> dict[str, Any]:
@@ -462,6 +493,47 @@ def commit_minutes(database_path: Path, event_key: str, actual_minutes: float, *
 
 def release_minutes(database_path: Path, event_key: str) -> None:
     execute(database_path, "UPDATE usage_events SET status = 'released', reserved_minutes = 0 WHERE event_key = :event_key AND status = 'reserved'", {"event_key": event_key})
+
+
+def request_subscription_change(database_path: Path, organization_id: int, user_id: int, requested_plan_code: str, billing_cycle: str = "monthly") -> dict[str, Any]:
+    init_workspace_storage(database_path)
+    if requested_plan_code not in PLAN_ENTITLEMENTS:
+        raise ValueError("Invalid requested plan.")
+    if billing_cycle not in {"monthly", "annual"}:
+        raise ValueError("Billing cycle must be monthly or annual.")
+    subscription = fetchone(database_path, "SELECT plan_code FROM subscriptions WHERE organization_id = :organization_id", {"organization_id": organization_id})
+    if subscription is None:
+        raise ValueError("Workspace subscription was not found.")
+    existing = fetchone(
+        database_path,
+        """
+        SELECT * FROM subscription_change_requests
+        WHERE organization_id = :organization_id AND requested_plan_code = :requested_plan_code
+          AND billing_cycle = :billing_cycle AND status = 'pending'
+        ORDER BY id DESC LIMIT 1
+        """,
+        {"organization_id": organization_id, "requested_plan_code": requested_plan_code, "billing_cycle": billing_cycle},
+    )
+    if existing is not None:
+        return existing
+    request_id = insert_and_return_id(
+        database_path,
+        """
+        INSERT INTO subscription_change_requests (
+            organization_id, requested_by_user_id, current_plan_code, requested_plan_code, billing_cycle
+        ) VALUES (
+            :organization_id, :requested_by_user_id, :current_plan_code, :requested_plan_code, :billing_cycle
+        )
+        """,
+        {
+            "organization_id": organization_id,
+            "requested_by_user_id": user_id,
+            "current_plan_code": subscription["plan_code"],
+            "requested_plan_code": requested_plan_code,
+            "billing_cycle": billing_cycle,
+        },
+    )
+    return fetchone(database_path, "SELECT * FROM subscription_change_requests WHERE id = :id", {"id": request_id}) or {}
 
 
 def set_subscription(database_path: Path, organization_id: int, plan_code: str, status: str = "active") -> dict[str, Any]:
