@@ -266,7 +266,7 @@ body:has(.landing-auth:not(.hidden)),
 
 .landing-cta-row {
   display: flex;
-  margin-bottom: 118px;
+  margin-bottom: 142px;
 }
 
 .landing-demo-btn {
@@ -433,7 +433,7 @@ body:has(.landing-auth:not(.hidden)),
 
 .landing-feature-bar {
   max-width: 1400px;
-  margin: 116px auto 0;
+  margin: 136px auto 0;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   border: 1px solid rgba(123, 110, 255, 0.14);
@@ -601,13 +601,15 @@ body:has(.landing-auth:not(.hidden)),
   top: 50%;
   left: 50%;
   width: min(540px, calc(100vw - 32px));
-  padding: 30px;
+  max-height: calc(100vh - 24px);
+  padding: 24px 24px 18px;
   transform: translate(-50%, -46%) scale(0.98);
   opacity: 0;
   pointer-events: none;
   z-index: 30;
   border-radius: 24px;
   box-shadow: 0 36px 100px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
 }
 
 .auth-modal-backdrop {
@@ -637,6 +639,10 @@ body:has(.landing-auth:not(.hidden)),
 .landing-auth .auth-proof-grid,
 .landing-auth .auth-visual {
   display: none;
+}
+
+body.auth-modal-open {
+  overflow: hidden;
 }
 
 .auth-close-btn {
@@ -818,8 +824,30 @@ body:has(.landing-auth:not(.hidden)),
 .auth-card-header { margin-bottom: 8px; }
 .panel-header h2, .hero h2, .panel-title-row h3 { margin: 0; font-size: 26px; }
 .panel-header p, .hero p, .muted { margin: 6px 0 0; color: var(--muted); }
-.auth-form { display: grid; gap: 14px; margin-top: 22px; }
-.auth-actions { display: flex; gap: 12px; flex-wrap: wrap; }
+.landing-auth .auth-card-wrap {
+  display: flex;
+  flex-direction: column;
+}
+.auth-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+.auth-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin-top: 4px;
+  padding-top: 8px;
+  padding-bottom: 2px;
+  background: linear-gradient(180deg, rgba(20, 27, 42, 0), rgba(20, 27, 42, 0.92) 28%, rgba(20, 27, 42, 0.98));
+}
 .auth-actions > * { flex: 1 1 180px; }
 .auth-switch { display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--muted); }
 .auth-link { white-space: nowrap; }
@@ -1389,16 +1417,16 @@ textarea#chatQuestionInput {
 }
 .workflow-board-visual {
   display: block;
-  overflow: auto hidden;
+  overflow: hidden;
   padding-bottom: 0;
 }
 .workflow-map-shell {
   position: relative;
   width: 100%;
   min-width: 0;
-  max-width: 1120px;
+  max-width: 1320px;
   margin: 0 auto;
-  padding: 28px;
+  padding: 20px;
   border-radius: 22px;
   background:
     radial-gradient(circle at top, rgba(99,102,241,0.08), transparent 34%),
@@ -1419,7 +1447,7 @@ textarea#chatQuestionInput {
 }
 .workflow-map {
   position: relative;
-  min-height: 620px;
+  min-height: 520px;
 }
 .workflow-link-layer {
   position: absolute;
@@ -1444,10 +1472,11 @@ textarea#chatQuestionInput {
   text-transform: uppercase;
 }
 .workflow-card {
-  min-width: 312px;
-  max-width: 312px;
-  min-height: 284px;
-  padding: 16px;
+  min-width: 272px;
+  max-width: 272px;
+  min-height: 236px;
+  max-height: 236px;
+  padding: 14px;
   border-radius: 18px;
   border: 1px solid var(--border);
   background: var(--surface-soft);
@@ -1460,11 +1489,12 @@ textarea#chatQuestionInput {
 }
 .workflow-card-floating {
   position: absolute;
-  width: 312px;
-  min-width: 312px;
-  max-width: 312px;
+  width: 272px;
+  min-width: 272px;
+  max-width: 272px;
   z-index: 2;
   cursor: grab;
+  overflow: hidden;
 }
 .workflow-card-floating:active {
   cursor: grabbing;
@@ -1482,8 +1512,8 @@ textarea#chatQuestionInput {
   letter-spacing: 0.06em;
 }
 .workflow-card strong {
-  font-size: 16px;
-  line-height: 1.35;
+  font-size: 14px;
+  line-height: 1.32;
 }
 .workflow-card-meta,
 .workflow-card-tags,
@@ -1512,13 +1542,30 @@ textarea#chatQuestionInput {
 .workflow-card p {
   margin: 0;
   color: var(--muted);
-  line-height: 1.5;
+  line-height: 1.45;
+  font-size: 12px;
+}
+.workflow-card-summary {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
 }
 .workflow-card-detail {
   margin: 0;
   color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: 11px;
+  line-height: 1.4;
+  display: none;
+}
+.workflow-card.is-expanded {
+  max-height: 236px;
+}
+.workflow-card.is-expanded .workflow-card-detail {
+  display: block;
+}
+.workflow-card.is-collapsed .workflow-card-detail {
+  display: none;
 }
 .workflow-card-meta,
 .workflow-card-footer {
@@ -2014,7 +2061,7 @@ textarea#chatQuestionInput {
 .timeline-tag.action { background: rgba(168,85,247,0.14); color: #d8b4fe; }
 .timeline-tag.risk { background: rgba(245,158,11,0.14); color: #fcd34d; }
 .timeline-tag.follow-up { background: rgba(34,197,94,0.14); color: #86efac; }
-.workflow-grid { grid-template-columns: 190px minmax(0, 1fr) minmax(320px, 360px); align-items: start; }
+.workflow-grid { grid-template-columns: 160px minmax(0, 1fr) minmax(280px, 320px); align-items: start; }
 #workflowView .property-card {
   min-width: 0;
   overflow: hidden;
@@ -2258,10 +2305,10 @@ body.popup-live-copilot #liveCopilotAnswer {
 }
 @media (max-width: 1440px) {
   .workflow-grid {
-    grid-template-columns: 176px minmax(0, 1fr) minmax(280px, 320px);
+    grid-template-columns: 148px minmax(0, 1fr) minmax(252px, 288px);
   }
   .workflow-map-shell {
-    max-width: 980px;
+    max-width: 1180px;
   }
 }
 
@@ -2394,6 +2441,7 @@ body.popup-live-copilot #liveCopilotAnswer {
   }
   .landing-auth .auth-card-wrap {
     width: min(520px, calc(100vw - 20px));
-    padding: 24px 18px;
+    max-height: calc(100vh - 16px);
+    padding: 22px 18px 16px;
   }
 }

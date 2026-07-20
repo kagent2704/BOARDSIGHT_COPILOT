@@ -32,7 +32,7 @@ const API_BASE = (() => {
   return origin.replace(/\/$/, "");
 })();
 
-const WORKFLOW_LAYOUT_VERSION = "2026-07-20-adaptive-snake";
+const WORKFLOW_LAYOUT_VERSION = "2026-07-20-compact-adaptive";
 
 function apiUrl(path) {
   if (!path) {
@@ -85,6 +85,12 @@ const confirmPasswordInput = document.getElementById("confirmPassword");
 const roleInput = document.getElementById("role");
 const guestLogin = document.getElementById("guestLogin");
 const guestHeroBtn = document.getElementById("guestHeroBtn");
+if (guestLogin && !guestLogin.dataset.defaultLabel) {
+  guestLogin.dataset.defaultLabel = guestLogin.textContent.trim();
+}
+if (guestHeroBtn && !guestHeroBtn.dataset.defaultLabel) {
+  guestHeroBtn.dataset.defaultLabel = guestHeroBtn.textContent.trim() || "Explore Demo";
+}
 const userName = document.getElementById("userName");
 const userRole = document.getElementById("userRole");
 const userInitials = document.getElementById("userInitials");
@@ -200,8 +206,8 @@ guestLogin.addEventListener("click", async () => {
   await launchDemoSession();
 });
 
-guestHeroBtn?.addEventListener("click", () => {
-  guestLogin.click();
+guestHeroBtn?.addEventListener("click", async () => {
+  await launchDemoSession();
 });
 
 loginForm.addEventListener("submit", async (event) => {
@@ -263,10 +269,13 @@ function openAuthModal(mode = "signin") {
   clearAuthFeedback();
   syncAuthMode();
   loginView.classList.add("auth-modal-open");
+  document.body.classList.add("auth-modal-open");
+  window.scrollTo({ top: 0, behavior: "instant" });
 }
 
 function closeAuthModal() {
   loginView.classList.remove("auth-modal-open");
+  document.body.classList.remove("auth-modal-open");
 }
 
 function setAuthFeedback(message, { success = false } = {}) {
@@ -283,6 +292,7 @@ function setAuthBusy(active, busyLabel = "Working...") {
   authRequestInFlight = active;
   authSubmit.disabled = active;
   guestLogin.disabled = active;
+  guestHeroBtn && (guestHeroBtn.disabled = active);
   authModeToggle.disabled = active;
   resendVerificationBtn.disabled = active;
   usernameInput.disabled = active;
@@ -293,8 +303,15 @@ function setAuthBusy(active, busyLabel = "Working...") {
   roleInput.disabled = active;
   if (active) {
     authSubmit.innerHTML = `<span class="spinner" aria-hidden="true"></span><span>${busyLabel}</span>`;
+    guestLogin.innerHTML = `<span class="spinner" aria-hidden="true"></span><span>Loading demo...</span>`;
+    if (guestHeroBtn) {
+      guestHeroBtn.innerHTML = `<span class="spinner" aria-hidden="true"></span><span>Loading demo...</span>`;
+    }
   } else {
     guestLogin.textContent = guestLogin.dataset.defaultLabel || "Continue as Demo";
+    if (guestHeroBtn) {
+      guestHeroBtn.innerHTML = `${guestHeroBtn.dataset.defaultLabel || "Explore Demo"} <span aria-hidden="true">→</span>`;
+    }
     syncAuthMode();
   }
 }
@@ -609,15 +626,27 @@ async function activateAuthenticatedApp(payload, options = {}) {
   if (isLiveCopilotPopup) {
     activateLivePopupMode();
   }
-  await loadMeetings();
-  await loadActiveLiveSession();
   const featuredMeetingId = String(options.featuredMeetingId || "").trim();
   if (featuredMeetingId) {
-    await loadMeetingDetail(featuredMeetingId);
+    state.currentMeetingId = featuredMeetingId;
   }
   if (!isLiveCopilotPopup) {
     setView(options.preferredView || "dashboard");
   }
+  updateDashboard();
+  renderMeetingList();
+  renderMeetingDetail();
+  renderGovernancePanel();
+  renderCvFeaturePanel();
+  renderTrace();
+  renderWorkflow();
+  renderLiveSession();
+  Promise.all([
+    loadMeetings(),
+    loadActiveLiveSession()
+  ]).catch((error) => {
+    console.error("BoardSight bootstrap failed", error);
+  });
 }
 
 function clearSession() {
@@ -1600,24 +1629,18 @@ function renderWorkflow() {
 
 function buildWorkflowLayoutMetrics(draft) {
   const viewportWidth = typeof window === "undefined" ? 1440 : window.innerWidth;
-  const estimatedCenterRail = Math.max(640, Math.min(1120, viewportWidth - 760));
-  const columnCount = estimatedCenterRail >= 760 ? 2 : 1;
-  const cardWidth = 312;
-  const cardHeight = 284;
-  const padding = columnCount === 2 ? 28 : 24;
-  const columnGap = columnCount === 2 ? Math.max(64, estimatedCenterRail - (cardWidth * 2) - (padding * 2)) : 0;
+  const estimatedCenterRail = Math.max(720, Math.min(1020, viewportWidth - 520));
+  const columnCount = 1;
+  const cardWidth = 272;
+  const cardHeight = 236;
+  const padding = 20;
+  const columnGap = 0;
   const startY = 34;
-  const bodyStartY = 150;
-  const rowGap = 212;
-  const middleNodes = Math.max(0, draft.nodes.length - 2);
-  const bodyRows = Math.max(1, Math.ceil(middleNodes / columnCount));
-  const height = Math.max(620, bodyStartY + (bodyRows * rowGap) + 160);
-  const width = Math.max(
-    estimatedCenterRail,
-    columnCount === 2
-      ? (padding * 2) + (cardWidth * 2) + columnGap
-      : (padding * 2) + cardWidth
-  );
+  const bodyStartY = 108;
+  const rowGap = 154;
+  const bodyRows = Math.max(1, draft.nodes.length);
+  const height = Math.max(540, bodyStartY + ((bodyRows - 1) * rowGap) + cardHeight + 64);
+  const width = Math.max(estimatedCenterRail, (padding * 2) + cardWidth);
   return {
     width,
     height,
@@ -1634,31 +1657,9 @@ function buildWorkflowLayoutMetrics(draft) {
 }
 
 function defaultWorkflowPosition(node, index, draft, metrics) {
-  if (index === 0) {
-    return { x: metrics.centerX, y: metrics.startY };
-  }
-  if (node.type === "end") {
-    const middleNodes = Math.max(0, draft.nodes.length - 2);
-    const bodyRows = Math.max(1, Math.ceil(middleNodes / metrics.columnCount));
-    return { x: metrics.centerX, y: metrics.bodyStartY + (bodyRows * metrics.rowGap) };
-  }
-  const middleIndex = Math.max(0, index - 1);
-  const row = Math.floor(middleIndex / metrics.columnCount);
-  const col = middleIndex % metrics.columnCount;
-  if (metrics.columnCount === 1) {
-    return {
-      x: metrics.centerX,
-      y: metrics.bodyStartY + (row * metrics.rowGap)
-    };
-  }
-  const rowItems = [
-    metrics.padding,
-    metrics.width - metrics.padding - metrics.cardWidth
-  ];
-  const isReverseRow = row % 2 === 1;
   return {
-    x: isReverseRow ? rowItems[rowItems.length - 1 - col] : rowItems[col],
-    y: metrics.bodyStartY + (row * metrics.rowGap)
+    x: metrics.centerX,
+    y: (index === 0 ? metrics.startY : metrics.bodyStartY + ((index - 1) * metrics.rowGap))
   };
 }
 
@@ -1697,8 +1698,8 @@ function workflowNodeRect(node) {
   return {
     x: Number(node.x || 0),
     y: Number(node.y || 0),
-    width: 312,
-    height: 284
+    width: 272,
+    height: 236
   };
 }
 
@@ -1714,10 +1715,11 @@ function renderWorkflowNodeCard(node, index) {
   const trace = findTraceForWorkflowNode(node, state.currentMeeting);
   const detailBits = [node.decisionId || "", trace?.trace_id || "", node.dueDate ? `Due ${node.dueDate}` : ""].filter(Boolean);
   const rect = workflowNodeRect(node);
+  const isExpanded = node.id === state.selectedWorkflowNodeId;
   return `
     <button
       type="button"
-      class="workflow-card workflow-card-floating ${node.id === state.selectedWorkflowNodeId ? "is-selected" : ""} type-${escapeHtml(node.type)}"
+      class="workflow-card workflow-card-floating ${isExpanded ? "is-selected is-expanded" : "is-collapsed"} type-${escapeHtml(node.type)}"
       data-workflow-node-id="${escapeHtml(node.id)}"
       style="left:${rect.x}px;top:${rect.y}px;"
     >
@@ -1727,14 +1729,14 @@ function renderWorkflowNodeCard(node, index) {
         <span>${escapeHtml(capitalize(node.type))}</span>
         <span>${escapeHtml(node.owner || "Unassigned")}</span>
       </div>
-      <p>${escapeHtml(node.summary || "No summary recorded.")}</p>
-      ${node.description ? `<p class="workflow-card-detail">${escapeHtml(shorten(node.description, 140))}</p>` : ""}
-      ${detailBits.length ? `<div class="workflow-card-tags">${detailBits.map((item) => `<span class="workflow-tag">${escapeHtml(item)}</span>`).join("")}</div>` : ""}
+      <p class="workflow-card-summary">${escapeHtml(node.summary || "No summary recorded.")}</p>
+      ${node.description ? `<p class="workflow-card-detail">${escapeHtml(shorten(node.description, isExpanded ? 220 : 84))}</p>` : ""}
+      ${detailBits.length ? `<div class="workflow-card-tags">${detailBits.slice(0, isExpanded ? detailBits.length : 2).map((item) => `<span class="workflow-tag">${escapeHtml(item)}</span>`).join("")}</div>` : ""}
       <div class="workflow-card-footer">
         <span class="status-badge neutral">${escapeHtml(node.status || "Draft")}</span>
         <small>${escapeHtml(node.decisionId || node.sourceStage || "Manual node")}</small>
       </div>
-      <span class="workflow-card-grab">Drag to map</span>
+      <span class="workflow-card-grab">${isExpanded ? "Expanded" : "Click to expand"}</span>
     </button>
   `;
 }
@@ -1747,10 +1749,12 @@ function renderWorkflowLink(link, draft) {
   }
   const start = workflowNodeCenter(fromNode);
   const end = workflowNodeCenter(toNode);
-  const deltaX = Math.max(80, Math.abs(end.x - start.x) * 0.5);
-  const path = `M ${start.x} ${start.y} C ${start.x + deltaX} ${start.y}, ${end.x - deltaX} ${end.y}, ${end.x} ${end.y}`;
-  const labelX = (start.x + end.x) / 2;
-  const labelY = (start.y + end.y) / 2 - 12;
+  const isVerticalLane = Math.abs(end.x - start.x) < 24;
+  const path = isVerticalLane
+    ? `M ${start.x} ${start.y} C ${start.x} ${start.y + 44}, ${end.x} ${end.y - 44}, ${end.x} ${end.y}`
+    : `M ${start.x} ${start.y} C ${start.x + 80} ${start.y}, ${end.x - 80} ${end.y}, ${end.x} ${end.y}`;
+  const labelX = isVerticalLane ? start.x + 72 : (start.x + end.x) / 2;
+  const labelY = isVerticalLane ? ((start.y + end.y) / 2) - 4 : ((start.y + end.y) / 2) - 12;
   return `
     <path class="workflow-link-path" d="${path}" />
     <text class="workflow-link-label" x="${labelX}" y="${labelY}" text-anchor="middle">${escapeHtml(link.label || "next")}</text>
