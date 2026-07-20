@@ -1429,6 +1429,13 @@ textarea#chatQuestionInput {
   overflow: auto;
   padding: 0 4px 8px;
 }
+.workspace-chip#workspaceSelector {
+  width: 100%;
+  color: var(--text);
+  cursor: pointer;
+}
+.compact-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.workspace-member-item { grid-template-columns: minmax(0, 1fr) auto auto; }
 .workflow-board-visual {
   display: block;
   overflow: hidden;

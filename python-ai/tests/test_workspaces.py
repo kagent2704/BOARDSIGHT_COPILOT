@@ -1,0 +1,173 @@
+from __future__ import annotations
+
+import pytest
+from fastapi.testclient import TestClient
+
+from boardsight_ai.auth import authenticate_user, create_user
+from boardsight_ai.database import fetchone
+from boardsight_ai.storage import get_meeting_result, init_storage, list_meeting_results, save_meeting_result
+from boardsight_ai.workspaces import (
+    accept_invitation,
+    commit_minutes,
+    create_invitation,
+    create_workspace,
+    ensure_personal_workspace,
+    get_workspace_for_user,
+    release_minutes,
+    reserve_minutes,
+    update_member,
+    usage_summary,
+)
+from boardsight_ai.service import app
+
+
+def _user(user_id: int, email: str, name: str = "BoardSight User") -> dict:
+    return {"user_id": user_id, "username": email.split("@", 1)[0], "email": email, "display_name": name}
+
+
+def test_personal_workspace_backfills_existing_user_content(tmp_path, sample_pipeline_result) -> None:
+    db_path = tmp_path / "workspace.db"
+    init_storage(db_path)
+    meeting_id = save_meeting_result(db_path, sample_pipeline_result, user_id=7, username="kash")
+
+    workspace = ensure_personal_workspace(db_path, _user(7, "kash@example.com", "Kash"))
+    stored = get_meeting_result(db_path, meeting_id, organization_id=int(workspace["id"]))
+
+    assert workspace["membership_role"] == "owner"
+    assert workspace["plan_code"] == "personal"
+    assert stored is not None
+    assert stored["organization_id"] == workspace["id"]
+    assert stored["created_by_user_id"] == 7
+
+
+def test_workspace_members_share_organization_scoped_meetings(tmp_path, sample_pipeline_result) -> None:
+    db_path = tmp_path / "shared.db"
+    init_storage(db_path)
+    owner = _user(1, "owner@example.com", "Owner")
+    member = _user(2, "member@example.com", "Member")
+    ensure_personal_workspace(db_path, owner)
+    workspace = create_workspace(db_path, "Acme Governance", 1)
+    invitation = create_invitation(db_path, int(workspace["id"]), member["email"], "member", 1)
+    accepted = accept_invitation(db_path, invitation["token"], member)
+    meeting_id = save_meeting_result(db_path, sample_pipeline_result, user_id=1, username="owner", organization_id=int(workspace["id"]))
+
+    shared_rows = list_meeting_results(db_path, organization_id=int(accepted["id"]))
+    shared_meeting = get_meeting_result(db_path, meeting_id, organization_id=int(accepted["id"]))
+
+    assert len(shared_rows) == 1
+    assert shared_meeting is not None
+
+
+def test_invitation_rejects_wrong_email_and_license_limit(tmp_path) -> None:
+    db_path = tmp_path / "licenses.db"
+    owner = _user(1, "owner@example.com", "Owner")
+    ensure_personal_workspace(db_path, owner)
+    workspace = create_workspace(db_path, "Licensed Workspace", 1)
+    workspace_id = int(workspace["id"])
+
+    wrong_email_invite = create_invitation(db_path, workspace_id, "member@example.com", "member", 1)
+    with pytest.raises(ValueError, match="does not match"):
+        accept_invitation(db_path, wrong_email_invite["token"], _user(2, "other@example.com"))
+
+    for user_id in (2, 3):
+        member = _user(user_id, f"member{user_id}@example.com")
+        invitation = create_invitation(db_path, workspace_id, member["email"], "member", 1)
+        accept_invitation(db_path, invitation["token"], member)
+
+    fourth = _user(4, "member4@example.com")
+    full_invitation = create_invitation(db_path, workspace_id, fourth["email"], "member", 1)
+    with pytest.raises(ValueError, match="no available"):
+        accept_invitation(db_path, full_invitation["token"], fourth)
+
+
+def test_usage_reservations_are_idempotent_and_released_on_failure(tmp_path) -> None:
+    db_path = tmp_path / "usage.db"
+    user = _user(1, "owner@example.com")
+    workspace = ensure_personal_workspace(db_path, user)
+    workspace_id = int(workspace["id"])
+
+    first = reserve_minutes(db_path, workspace_id, 1, 120, usage_type="recorded_analysis", event_key="run-1")
+    duplicate = reserve_minutes(db_path, workspace_id, 1, 120, usage_type="recorded_analysis", event_key="run-1")
+    commit_minutes(db_path, "run-1", 95, meeting_id=42)
+    reserve_minutes(db_path, workspace_id, 1, 200, usage_type="recorded_analysis", event_key="run-2")
+    release_minutes(db_path, "run-2")
+
+    summary = usage_summary(db_path, workspace_id)
+    committed = fetchone(db_path, "SELECT * FROM usage_events WHERE event_key = 'run-1'")
+
+    assert first["id"] == duplicate["id"]
+    assert committed is not None and committed["meeting_id"] == 42
+    assert summary["used_minutes"] == 95
+    assert summary["remaining_minutes"] == 205
+
+    with pytest.raises(OverflowError):
+        reserve_minutes(db_path, workspace_id, 1, 206, usage_type="recorded_analysis", event_key="run-3")
+
+
+def test_viewer_cannot_be_activated_past_seat_limit(tmp_path) -> None:
+    db_path = tmp_path / "viewer.db"
+    owner = _user(1, "owner@example.com")
+    ensure_personal_workspace(db_path, owner)
+    workspace = create_workspace(db_path, "Viewer Workspace", 1)
+    workspace_id = int(workspace["id"])
+    for user_id in (2, 3):
+        member = _user(user_id, f"member{user_id}@example.com")
+        invite = create_invitation(db_path, workspace_id, member["email"], "member", 1)
+        accept_invitation(db_path, invite["token"], member)
+    viewer = _user(4, "viewer@example.com")
+    viewer_invite = create_invitation(db_path, workspace_id, viewer["email"], "viewer", 1)
+    accept_invitation(db_path, viewer_invite["token"], viewer)
+
+    with pytest.raises(ValueError, match="no available"):
+        update_member(db_path, workspace_id, 4, role="member", license_status="active")
+
+    assert get_workspace_for_user(db_path, workspace_id, 4)["membership_role"] == "viewer"
+
+
+def test_workspace_api_creates_personal_and_team_workspaces(tmp_path, monkeypatch) -> None:
+    auth_db = tmp_path / "auth.db"
+    meeting_db = tmp_path / "meetings.db"
+    create_user(auth_db, "workspace-owner", "secret", display_name="Workspace Owner", email="owner@example.com")
+    session = authenticate_user(auth_db, "workspace-owner", "secret")
+    assert session is not None
+    monkeypatch.setattr("boardsight_ai.service.AUTH_DB_PATH", auth_db)
+    monkeypatch.setattr("boardsight_ai.service.MEETING_DB_PATH", meeting_db)
+    client = TestClient(app)
+    headers = {"Authorization": f"Bearer {session['token']}"}
+
+    me_response = client.get("/api/v1/me", headers=headers)
+    create_response = client.post("/api/v1/workspaces", headers=headers, json={"name": "Acme Board"})
+
+    assert me_response.status_code == 200
+    assert me_response.json()["workspace"]["plan_code"] == "personal"
+    assert create_response.status_code == 200
+    team = create_response.json()["workspace"]
+    assert team["plan_code"] == "starter"
+    assert team["subscription_status"] == "trialing"
+
+    team_headers = {**headers, "X-BoardSight-Workspace-ID": str(team["id"])}
+    members_response = client.get(f"/api/v1/workspaces/{team['id']}/members", headers=team_headers)
+    assert members_response.status_code == 200
+    assert members_response.json()["items"][0]["email"] == "owner@example.com"
+
+
+def test_registration_cannot_self_assign_global_admin(tmp_path, monkeypatch) -> None:
+    auth_db = tmp_path / "auth.db"
+    meeting_db = tmp_path / "meetings.db"
+    monkeypatch.setattr("boardsight_ai.service.AUTH_DB_PATH", auth_db)
+    monkeypatch.setattr("boardsight_ai.service.MEETING_DB_PATH", meeting_db)
+    monkeypatch.setattr("boardsight_ai.service._email_provider_is_configured", lambda: False)
+    client = TestClient(app)
+
+    response = client.post("/api/v1/auth/register", json={
+        "username": "not-admin",
+        "email": "not-admin@example.com",
+        "password": "secret",
+        "confirm_password": "secret",
+        "display_name": "Not Admin",
+        "role": "admin",
+    })
+
+    assert response.status_code == 200
+    from boardsight_ai.auth import get_user_by_username
+    assert get_user_by_username(auth_db, "not-admin")["role"] == "analyst"

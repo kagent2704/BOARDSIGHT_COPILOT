@@ -15,6 +15,7 @@ def init_gitlab_storage(database_path: Path) -> None:
             """
             CREATE TABLE IF NOT EXISTS gitlab_syncs (
                 id BIGSERIAL PRIMARY KEY,
+                organization_id BIGINT,
                 source_kind TEXT NOT NULL,
                 source_id TEXT NOT NULL,
                 project_ref TEXT,
@@ -31,6 +32,7 @@ def init_gitlab_storage(database_path: Path) -> None:
             """
             CREATE TABLE IF NOT EXISTS gitlab_syncs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                organization_id INTEGER,
                 source_kind TEXT NOT NULL,
                 source_id TEXT NOT NULL,
                 project_ref TEXT,
@@ -41,6 +43,10 @@ def init_gitlab_storage(database_path: Path) -> None:
             )
             """,
         )
+    try:
+        execute(database_path, "ALTER TABLE gitlab_syncs ADD COLUMN organization_id BIGINT")
+    except Exception:
+        pass
 
 
 def save_gitlab_sync(
@@ -48,6 +54,7 @@ def save_gitlab_sync(
     *,
     source_kind: str,
     source_id: str,
+    organization_id: int | None = None,
     project_ref: str | None,
     dry_run: bool,
     plan: dict[str, Any],
@@ -58,12 +65,13 @@ def save_gitlab_sync(
         database_path,
         """
         INSERT INTO gitlab_syncs (
-            source_kind, source_id, project_ref, dry_run, plan_json, sync_json
+            organization_id, source_kind, source_id, project_ref, dry_run, plan_json, sync_json
         ) VALUES (
-            :source_kind, :source_id, :project_ref, :dry_run, :plan_json, :sync_json
+            :organization_id, :source_kind, :source_id, :project_ref, :dry_run, :plan_json, :sync_json
         )
         """,
         {
+            "organization_id": organization_id,
             "source_kind": source_kind,
             "source_id": source_id,
             "project_ref": project_ref,

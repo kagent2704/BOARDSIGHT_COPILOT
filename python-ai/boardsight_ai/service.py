@@ -29,7 +29,7 @@ except Exception as exc:  # pragma: no cover
 
 from boardsight_ai.pipeline import run_pipeline, write_result
 from boardsight_ai.live_session import answer_live_copilot, build_live_session_payload
-from boardsight_ai.providers.media import clip_video_fast
+from boardsight_ai.providers.media import clip_video_fast, probe_video
 from boardsight_ai.auth import (
     authenticate_credentials,
     authenticate_user,
@@ -84,6 +84,23 @@ from boardsight_ai.storage import (
 from boardsight_ai.reporting import write_structured_reports
 from boardsight_ai.models import pipeline_result_from_dict
 from boardsight_ai.demo_mode import create_demo_session, ensure_demo_workspace
+from boardsight_ai.workspaces import (
+    accept_invitation,
+    assert_workspace_access,
+    commit_minutes,
+    create_invitation,
+    create_workspace,
+    ensure_personal_workspace,
+    get_workspace_for_user,
+    init_workspace_storage,
+    list_workspace_members,
+    list_workspaces_for_user,
+    release_minutes,
+    reserve_minutes,
+    set_subscription,
+    update_member,
+    usage_summary,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "output" / "appdata"
@@ -92,6 +109,7 @@ MEETING_DB_PATH = DATA_DIR / "boardsight_meetings.db"
 _load_local_env(PROJECT_ROOT)
 init_auth_storage(AUTH_DB_PATH)
 init_storage(MEETING_DB_PATH)
+init_workspace_storage(MEETING_DB_PATH)
 init_agent_storage(MEETING_DB_PATH)
 init_gitlab_storage(MEETING_DB_PATH)
 
@@ -589,7 +607,8 @@ async def register(request: Request, background_tasks: BackgroundTasks, payload:
     email = str(request_payload.get("email", "")).strip().lower()
     password = str(request_payload.get("password", "")).strip()
     confirm_password = str(request_payload.get("confirm_password", "")).strip()
-    role = str(request_payload.get("role", "analyst")).strip() or "analyst"
+    requested_role = str(request_payload.get("role", "analyst")).strip().lower().replace(" ", "_") or "analyst"
+    role = requested_role if requested_role in {"analyst", "executive_observer", "board_member"} else "analyst"
     display_name = str(request_payload.get("display_name", username)).strip() or username
     if not username or not email or not password or not confirm_password:
         raise HTTPException(status_code=400, detail="Username, email, password, and confirmation are required.")
@@ -719,6 +738,50 @@ def _require_admin_user(request: Request) -> dict:
     return user
 
 
+def _workspace_context(
+    request: Request,
+    user: dict,
+    *,
+    require_admin: bool = False,
+    require_license: bool = False,
+) -> dict:
+    personal = ensure_personal_workspace(MEETING_DB_PATH, user)
+    requested_id = str(request.headers.get("x-boardsight-workspace-id") or request.query_params.get("workspace_id") or "").strip()
+    workspace = personal
+    if requested_id:
+        try:
+            workspace = get_workspace_for_user(MEETING_DB_PATH, int(requested_id), int(user["user_id"]))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid workspace identifier.") from exc
+        if workspace is None:
+            raise HTTPException(status_code=404, detail="Workspace was not found for this account.")
+    try:
+        assert_workspace_access(workspace, require_admin=require_admin, require_license=require_license)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return workspace
+
+
+def _workspace_payload(workspace: dict) -> dict:
+    organization_id = int(workspace["id"])
+    return {
+        "id": organization_id,
+        "name": workspace.get("name"),
+        "slug": workspace.get("slug"),
+        "is_personal": bool(workspace.get("is_personal")),
+        "role": workspace.get("membership_role"),
+        "license_status": workspace.get("license_status"),
+        "plan_code": workspace.get("plan_code"),
+        "subscription_status": workspace.get("subscription_status"),
+        "usage": usage_summary(MEETING_DB_PATH, organization_id),
+    }
+
+
+def _user_with_workspace(request: Request, user: dict, *, require_license: bool = False) -> dict:
+    workspace = _workspace_context(request, user, require_license=require_license)
+    return {**user, "_workspace_id": int(workspace["id"]), "_workspace": workspace}
+
+
 def _summarize_meeting_row(row: dict) -> dict:
     meeting_id = int(row["id"])
     run_name = str(row.get("run_name") or f"meeting-{meeting_id}")
@@ -743,7 +806,13 @@ def _summarize_meeting_row(row: dict) -> dict:
 
 
 def _resolve_owned_meeting_record(meeting_id: int, user: dict) -> dict:
-    record = get_meeting_result(MEETING_DB_PATH, meeting_id, user_id=int(user["user_id"]))
+    workspace_id = user.get("_workspace_id")
+    record = get_meeting_result(
+        MEETING_DB_PATH,
+        meeting_id,
+        user_id=int(user["user_id"]) if workspace_id is None else None,
+        organization_id=int(workspace_id) if workspace_id is not None else None,
+    )
     if record is None:
         raise HTTPException(status_code=404, detail="Stored analysis not found.")
     return record
@@ -822,7 +891,113 @@ def _sanitize_workflow_editor_payload(payload: dict) -> dict:
 
 @app.get("/api/v1/me")
 def me(request: Request) -> dict:
-    return _require_session_user(request)
+    user = _require_session_user(request)
+    workspace = _workspace_context(request, user)
+    return {**user, "workspace": _workspace_payload(workspace)}
+
+
+@app.get("/api/v1/workspaces")
+def workspaces(request: Request) -> dict:
+    user = _require_session_user(request)
+    ensure_personal_workspace(MEETING_DB_PATH, user)
+    items = list_workspaces_for_user(MEETING_DB_PATH, int(user["user_id"]))
+    return {"items": [_workspace_payload(item) for item in items]}
+
+
+@app.post("/api/v1/workspaces")
+async def create_workspace_endpoint(request: Request, payload: dict | None = None) -> dict:
+    user = _require_session_user(request)
+    request_payload = await _collect_request_payload(request, payload)
+    try:
+        workspace = create_workspace(MEETING_DB_PATH, str(request_payload.get("name") or ""), int(user["user_id"]))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"workspace": _workspace_payload(workspace)}
+
+
+@app.get("/api/v1/workspaces/{organization_id}")
+def workspace_detail(organization_id: int, request: Request) -> dict:
+    user = _require_session_user(request)
+    workspace = get_workspace_for_user(MEETING_DB_PATH, organization_id, int(user["user_id"]))
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace was not found for this account.")
+    return {"workspace": _workspace_payload(workspace)}
+
+
+@app.get("/api/v1/workspaces/{organization_id}/members")
+def workspace_members(organization_id: int, request: Request) -> dict:
+    user = _require_session_user(request)
+    workspace = get_workspace_for_user(MEETING_DB_PATH, organization_id, int(user["user_id"]))
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace was not found for this account.")
+    members = list_workspace_members(MEETING_DB_PATH, organization_id)
+    for member in members:
+        identity = fetchone(AUTH_DB_PATH, "SELECT username, email, display_name FROM users WHERE id = :user_id", {"user_id": member["user_id"]})
+        if identity:
+            member.update(identity)
+    return {"items": members}
+
+
+@app.post("/api/v1/workspaces/{organization_id}/invitations")
+async def invite_workspace_member(organization_id: int, request: Request, payload: dict | None = None) -> dict:
+    user = _require_session_user(request)
+    workspace = get_workspace_for_user(MEETING_DB_PATH, organization_id, int(user["user_id"]))
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace was not found for this account.")
+    try:
+        assert_workspace_access(workspace, require_admin=True)
+        request_payload = await _collect_request_payload(request, payload)
+        invitation = create_invitation(MEETING_DB_PATH, organization_id, str(request_payload.get("email") or ""), str(request_payload.get("role") or "member"), int(user["user_id"]))
+    except (ValueError, PermissionError) as exc:
+        raise HTTPException(status_code=400 if isinstance(exc, ValueError) else 403, detail=str(exc)) from exc
+    # Until transactional email templates are added, the token is returned to the owner
+    # so initial customer onboarding can be completed manually.
+    return {"status": "invited", "invitation": invitation}
+
+
+@app.post("/api/v1/workspaces/invitations/{token}/accept")
+def accept_workspace_invitation(token: str, request: Request) -> dict:
+    user = _require_session_user(request)
+    try:
+        workspace = accept_invitation(MEETING_DB_PATH, token, user)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "accepted", "workspace": _workspace_payload(workspace)}
+
+
+@app.patch("/api/v1/workspaces/{organization_id}/members/{member_user_id}")
+async def update_workspace_member(organization_id: int, member_user_id: int, request: Request, payload: dict | None = None) -> dict:
+    user = _require_session_user(request)
+    workspace = get_workspace_for_user(MEETING_DB_PATH, organization_id, int(user["user_id"]))
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace was not found for this account.")
+    try:
+        assert_workspace_access(workspace, require_admin=True)
+        request_payload = await _collect_request_payload(request, payload)
+        member = update_member(MEETING_DB_PATH, organization_id, member_user_id, role=request_payload.get("role"), license_status=request_payload.get("license_status"))
+    except (ValueError, PermissionError) as exc:
+        raise HTTPException(status_code=400 if isinstance(exc, ValueError) else 403, detail=str(exc)) from exc
+    return {"status": "updated", "member": member}
+
+
+@app.get("/api/v1/workspaces/{organization_id}/usage")
+def workspace_usage(organization_id: int, request: Request) -> dict:
+    user = _require_session_user(request)
+    workspace = get_workspace_for_user(MEETING_DB_PATH, organization_id, int(user["user_id"]))
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace was not found for this account.")
+    return {"usage": usage_summary(MEETING_DB_PATH, organization_id)}
+
+
+@app.put("/api/v1/admin/workspaces/{organization_id}/subscription")
+async def administer_workspace_subscription(organization_id: int, request: Request, payload: dict | None = None) -> dict:
+    _require_admin_user(request)
+    request_payload = await _collect_request_payload(request, payload)
+    try:
+        subscription = set_subscription(MEETING_DB_PATH, organization_id, str(request_payload.get("plan_code") or ""), str(request_payload.get("status") or "active"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "updated", "subscription": subscription}
 
 
 @app.get("/api/v1/privacy/settings")
@@ -852,14 +1027,14 @@ def run_retention_cleanup(request: Request) -> dict:
 
 @app.get("/api/v1/meetings")
 def meetings(request: Request) -> dict:
-    user = _require_session_user(request)
-    rows = list_meeting_results(MEETING_DB_PATH, user_id=int(user["user_id"]))
+    user = _user_with_workspace(request, _require_session_user(request))
+    rows = list_meeting_results(MEETING_DB_PATH, organization_id=int(user["_workspace_id"]))
     return {"items": [_summarize_meeting_row(row) for row in rows]}
 
 
 @app.get("/api/v1/meetings/{meeting_id}")
 def meeting_detail(meeting_id: int, request: Request) -> dict:
-    user = _require_session_user(request)
+    user = _user_with_workspace(request, _require_session_user(request))
     record = _resolve_owned_meeting_record(meeting_id, user)
     payload = json.loads(str(record.get("result_json") or "{}"))
     payload["storage"] = {
@@ -874,7 +1049,7 @@ def meeting_detail(meeting_id: int, request: Request) -> dict:
 
 @app.put("/api/v1/meetings/{meeting_id}/workflow")
 async def update_meeting_workflow(meeting_id: int, request: Request, payload: dict | None = None) -> dict:
-    user = _require_session_user(request)
+    user = _user_with_workspace(request, _require_session_user(request), require_license=True)
     request_payload = await _collect_request_payload(request, payload)
     workflow_editor = _sanitize_workflow_editor_payload(request_payload)
     workflow_editor["meetingId"] = str(meeting_id)
@@ -882,7 +1057,7 @@ async def update_meeting_workflow(meeting_id: int, request: Request, payload: di
         MEETING_DB_PATH,
         meeting_id,
         workflow_editor,
-        user_id=int(user["user_id"]),
+        organization_id=int(user["_workspace_id"]),
     )
     if updated_record is None:
         raise HTTPException(status_code=404, detail="Stored analysis not found.")
@@ -903,21 +1078,21 @@ async def update_meeting_workflow(meeting_id: int, request: Request, payload: di
 
 @app.post("/api/v1/meetings/{meeting_id}/gitlab/preview")
 async def meeting_gitlab_preview(meeting_id: int, request: Request, payload: dict | None = None) -> dict:
-    user = _require_session_user(request)
+    user = _user_with_workspace(request, _require_session_user(request), require_license=True)
     request_payload = await _collect_request_payload(request, payload)
     return _create_meeting_gitlab_preview(meeting_id, user, request_payload)
 
 
 @app.post("/api/v1/meetings/{meeting_id}/gitlab/sync")
 async def meeting_gitlab_sync(meeting_id: int, request: Request, payload: dict | None = None) -> dict:
-    user = _require_session_user(request)
+    user = _user_with_workspace(request, _require_session_user(request), require_license=True)
     request_payload = await _collect_request_payload(request, payload)
     return _sync_meeting_gitlab_preview(meeting_id, user, request_payload)
 
 
 @app.get("/api/v1/meetings/{meeting_id}/reports/{file_name}")
 def meeting_report(meeting_id: int, file_name: str, request: Request):
-    user = _require_session_user(request)
+    user = _user_with_workspace(request, _require_session_user(request))
     record = _resolve_owned_meeting_record(meeting_id, user)
     output_dir = Path(str(record.get("output_dir") or "")).resolve()
     if output_dir.exists():
@@ -979,7 +1154,13 @@ def _regenerate_meeting_report_from_record(record: dict, file_name: str) -> Path
 
 
 def _resolve_owned_live_session(session_id: int, user: dict) -> dict:
-    record = get_live_session(MEETING_DB_PATH, session_id, user_id=int(user["user_id"]))
+    workspace_id = user.get("_workspace_id")
+    record = get_live_session(
+        MEETING_DB_PATH,
+        session_id,
+        user_id=int(user["user_id"]) if workspace_id is None else None,
+        organization_id=int(workspace_id) if workspace_id is not None else None,
+    )
     if record is None:
         raise HTTPException(status_code=404, detail="Live session not found.")
     return record
@@ -1040,6 +1221,7 @@ def _create_gitlab_preview_for_payload(
     user: dict[str, Any],
     request_payload: dict[str, Any],
 ) -> dict[str, Any]:
+    workspace = _workspace_context(user, require_license=True)
     config = default_config()
     meeting_title = _meeting_title_from_payload(source_kind, source_id, source_payload)
     plan = build_gitlab_execution_plan(
@@ -1060,6 +1242,7 @@ def _create_gitlab_preview_for_payload(
     connection_overrides = _gitlab_connection_overrides(request_payload)
     save_gitlab_sync(
         MEETING_DB_PATH,
+        organization_id=int(workspace["id"]),
         source_kind=source_kind,
         source_id=source_id,
         project_ref=str(connection_overrides.get("project_id") or config.gitlab_project_id or ""),
@@ -1133,6 +1316,7 @@ def _sync_gitlab_preview(
     request_payload: dict[str, Any],
     preview_builder,
 ) -> dict[str, Any]:
+    workspace = _workspace_context(user, require_license=True)
     approval_id = str(request_payload.get("approval_id") or "").strip()
     execution_run = get_agent_execution_run(MEETING_DB_PATH, approval_id) if approval_id else None
     if execution_run is None:
@@ -1160,6 +1344,7 @@ def _sync_gitlab_preview(
     )
     save_gitlab_sync(
         MEETING_DB_PATH,
+        organization_id=int(workspace["id"]),
         source_kind=source_kind,
         source_id=source_id,
         project_ref=str(connection_overrides.get("project_id") or config.gitlab_project_id or ""),
@@ -1220,8 +1405,8 @@ def _decode_base64_frame(image_base64: str):
 
 @app.get("/api/v1/live/active")
 def live_active(request: Request) -> dict:
-    user = _require_session_user(request)
-    sessions = list_live_sessions(MEETING_DB_PATH, user_id=int(user["user_id"]), status="active")
+    user = _user_with_workspace(request, _require_session_user(request))
+    sessions = list_live_sessions(MEETING_DB_PATH, organization_id=int(user["_workspace_id"]), status="active")
     if not sessions:
         return {"session": None}
     config = default_config()
@@ -1233,7 +1418,7 @@ def live_active(request: Request) -> dict:
 
 @app.post("/api/v1/live/start")
 async def start_live_session(request: Request, payload: dict | None = None) -> dict:
-    user = _require_session_user(request)
+    user = _user_with_workspace(request, _require_session_user(request), require_license=True)
     request_payload = await _collect_request_payload(request, payload)
     title = str(request_payload.get("title", "")).strip() or f"Live Session {datetime.utcnow().strftime('%H:%M')}"
     session_id = create_live_session(
@@ -1241,7 +1426,21 @@ async def start_live_session(request: Request, payload: dict | None = None) -> d
         title,
         user_id=int(user["user_id"]),
         username=str(user["username"]),
+        organization_id=int(user["_workspace_id"]),
     )
+    expected_minutes = max(1.0, float(request_payload.get("expected_minutes") or 60.0))
+    try:
+        reserve_minutes(
+            MEETING_DB_PATH,
+            int(user["_workspace_id"]),
+            int(user["user_id"]),
+            expected_minutes,
+            usage_type="live_session",
+            event_key=f"live:{session_id}",
+        )
+    except (PermissionError, OverflowError) as exc:
+        execute(MEETING_DB_PATH, "DELETE FROM live_sessions WHERE id = :session_id", {"session_id": session_id})
+        raise HTTPException(status_code=402, detail=str(exc)) from exc
     session_row = _resolve_owned_live_session(session_id, user)
     return {
         "session": {
@@ -1255,7 +1454,7 @@ async def start_live_session(request: Request, payload: dict | None = None) -> d
 
 @app.get("/api/v1/live/{session_id}")
 def live_session_detail(session_id: int, request: Request) -> dict:
-    user = _require_session_user(request)
+    user = _user_with_workspace(request, _require_session_user(request))
     session_row = _resolve_owned_live_session(session_id, user)
     event_rows = get_live_session_events(MEETING_DB_PATH, session_id)
     visual_rows = get_live_session_visual_events(MEETING_DB_PATH, session_id)
@@ -1265,7 +1464,7 @@ def live_session_detail(session_id: int, request: Request) -> dict:
 
 @app.post("/api/v1/live/{session_id}/events")
 async def append_live_event(session_id: int, request: Request, payload: dict | None = None) -> dict:
-    user = _require_session_user(request)
+    user = _user_with_workspace(request, _require_session_user(request), require_license=True)
     _resolve_owned_live_session(session_id, user)
     request_payload = await _collect_request_payload(request, payload)
     text = str(request_payload.get("text", "")).strip()
@@ -1296,7 +1495,7 @@ async def append_live_event(session_id: int, request: Request, payload: dict | N
 
 @app.post("/api/v1/live/{session_id}/visual")
 async def append_live_visual(session_id: int, request: Request, payload: dict | None = None) -> dict:
-    user = _require_session_user(request)
+    user = _user_with_workspace(request, _require_session_user(request), require_license=True)
     session_row = _resolve_owned_live_session(session_id, user)
     request_payload = await _collect_request_payload(request, payload)
     image_base64 = str(request_payload.get("image_base64", "")).strip()
@@ -1339,7 +1538,7 @@ async def append_live_visual(session_id: int, request: Request, payload: dict | 
 
 @app.post("/api/v1/live/{session_id}/copilot")
 async def live_copilot(session_id: int, request: Request, payload: dict | None = None) -> dict:
-    user = _require_session_user(request)
+    user = _user_with_workspace(request, _require_session_user(request), require_license=True)
     session_row = _resolve_owned_live_session(session_id, user)
     request_payload = await _collect_request_payload(request, payload)
     question = str(request_payload.get("question", "")).strip()
@@ -1363,23 +1562,26 @@ async def live_copilot(session_id: int, request: Request, payload: dict | None =
 
 @app.post("/api/v1/live/{session_id}/gitlab/preview")
 async def live_gitlab_preview(session_id: int, request: Request, payload: dict | None = None) -> dict:
-    user = _require_session_user(request)
+    user = _user_with_workspace(request, _require_session_user(request), require_license=True)
     request_payload = await _collect_request_payload(request, payload)
     return _create_gitlab_preview(session_id, user, request_payload)
 
 
 @app.post("/api/v1/live/{session_id}/gitlab/sync")
 async def live_gitlab_sync(session_id: int, request: Request, payload: dict | None = None) -> dict:
-    user = _require_session_user(request)
+    user = _user_with_workspace(request, _require_session_user(request), require_license=True)
     request_payload = await _collect_request_payload(request, payload)
     return _sync_live_gitlab_preview(session_id, user, request_payload)
 
 
 @app.post("/api/v1/live/{session_id}/finalize")
 def finalize_live(session_id: int, request: Request) -> dict:
-    user = _require_session_user(request)
+    user = _user_with_workspace(request, _require_session_user(request), require_license=True)
     _resolve_owned_live_session(session_id, user)
     finalize_live_session(MEETING_DB_PATH, session_id)
+    event_rows = get_live_session_events(MEETING_DB_PATH, session_id)
+    actual_seconds = max((float(row.get("end_seconds") or 0.0) for row in event_rows), default=0.0)
+    commit_minutes(MEETING_DB_PATH, f"live:{session_id}", max(0.01, actual_seconds / 60.0), live_session_id=session_id)
     session_row = _resolve_owned_live_session(session_id, user)
     return {
         "session": {
@@ -1392,7 +1594,7 @@ def finalize_live(session_id: int, request: Request) -> dict:
     }
 
 
-def _build_output_payload(result, output_dir: Path, user: dict | None = None) -> dict:
+def _build_output_payload(result, output_dir: Path, user: dict | None = None, *, usage_event_key: str | None = None, usage_minutes: float | None = None) -> dict:
     result_path = write_result(result, output_dir / "boardsight_result.json")
     meeting_id = save_meeting_result(
         MEETING_DB_PATH,
@@ -1401,7 +1603,10 @@ def _build_output_payload(result, output_dir: Path, user: dict | None = None) ->
         result_file=result_path,
         user_id=int(user["user_id"]) if user is not None else None,
         username=str(user["username"]) if user is not None else None,
+        organization_id=int(user["_workspace_id"]) if user is not None and user.get("_workspace_id") is not None else None,
     )
+    if usage_event_key:
+        commit_minutes(MEETING_DB_PATH, usage_event_key, float(usage_minutes or 0.0), meeting_id=meeting_id)
     payload = result.to_dict()
     payload["storage"] = {
         "meeting_id": meeting_id,
@@ -1444,6 +1649,19 @@ def _resolve_analysis_input(
     return Path(str(analysis_range["output_path"])).resolve(), analysis_range
 
 
+def _analysis_minutes(video_path: Path, analysis_range: dict | None = None) -> float:
+    duration_seconds = None
+    if analysis_range:
+        duration_seconds = analysis_range.get("duration_seconds")
+        if duration_seconds is None and analysis_range.get("end_seconds") is not None:
+            duration_seconds = max(0.0, float(analysis_range["end_seconds"]) - float(analysis_range.get("start_seconds") or 0.0))
+    if duration_seconds is None:
+        duration_seconds = probe_video(video_path).get("duration_sec")
+    if duration_seconds is None:
+        raise HTTPException(status_code=400, detail="Unable to determine meeting duration for workspace usage.")
+    return max(0.01, float(duration_seconds) / 60.0)
+
+
 def _run_pipeline_for_shared_path(
     shared_file_path: str,
     output_dir_name: str | None,
@@ -1460,18 +1678,25 @@ def _run_pipeline_for_shared_path(
         raise HTTPException(status_code=400, detail="Shared file path does not exist for AI processing.")
     output_dir = _resolve_output_dir(output_dir_name)
     analysis_input_path, analysis_range = _resolve_analysis_input(candidate_path, output_dir, start_seconds, end_seconds)
-    result = run_pipeline(
-        analysis_input_path,
-        output_dir,
-        analysis_range=analysis_range,
-        analysis_profile=analysis_profile,
-    )
-    return _build_output_payload(result, output_dir, user=user)
+    usage_minutes = _analysis_minutes(analysis_input_path, analysis_range)
+    usage_key = f"recorded:{int(user['_workspace_id'])}:{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}" if user and user.get("_workspace_id") else None
+    if usage_key:
+        try:
+            reserve_minutes(MEETING_DB_PATH, int(user["_workspace_id"]), int(user["user_id"]), usage_minutes, usage_type="recorded_analysis", event_key=usage_key)
+        except (PermissionError, OverflowError) as exc:
+            raise HTTPException(status_code=402, detail=str(exc)) from exc
+    try:
+        result = run_pipeline(analysis_input_path, output_dir, analysis_range=analysis_range, analysis_profile=analysis_profile)
+        return _build_output_payload(result, output_dir, user=user, usage_event_key=usage_key, usage_minutes=usage_minutes)
+    except Exception:
+        if usage_key:
+            release_minutes(MEETING_DB_PATH, usage_key)
+        raise
 
 
 @app.post("/api/v1/pipeline/run-path")
 async def run_pipeline_path_endpoint(request: Request, payload: dict | None = None) -> dict:
-    user = _require_session_user(request)
+    user = _user_with_workspace(request, _require_session_user(request), require_license=True)
     request_payload = payload or {}
     if not request_payload:
         try:
@@ -1512,7 +1737,7 @@ async def run_pipeline_endpoint(
     meeting_file: UploadFile | None = File(default=None),
     output_dir_name: str | None = Form(default=None),
 ) -> dict:
-    user = _require_session_user(request)
+    user = _user_with_workspace(request, _require_session_user(request), require_license=True)
     resolved_upload = file or upload or meeting_file
     request_query = request.query_params
     request_payload: dict = {}
@@ -1585,13 +1810,18 @@ async def run_pipeline_endpoint(
             raise HTTPException(status_code=400, detail="Failed to persist uploaded file.")
 
         analysis_input_path, analysis_range = _resolve_analysis_input(video_path, output_dir, start_seconds, end_seconds)
-        result = run_pipeline(
-            analysis_input_path,
-            output_dir,
-            analysis_range=analysis_range,
-            analysis_profile=analysis_profile,
-        )
-        return _build_output_payload(result, output_dir, user=user)
+        usage_minutes = _analysis_minutes(analysis_input_path, analysis_range)
+        usage_key = f"recorded:{int(user['_workspace_id'])}:{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
+        try:
+            reserve_minutes(MEETING_DB_PATH, int(user["_workspace_id"]), int(user["user_id"]), usage_minutes, usage_type="recorded_analysis", event_key=usage_key)
+        except (PermissionError, OverflowError) as exc:
+            raise HTTPException(status_code=402, detail=str(exc)) from exc
+        try:
+            result = run_pipeline(analysis_input_path, output_dir, analysis_range=analysis_range, analysis_profile=analysis_profile)
+            return _build_output_payload(result, output_dir, user=user, usage_event_key=usage_key, usage_minutes=usage_minutes)
+        except Exception:
+            release_minutes(MEETING_DB_PATH, usage_key)
+            raise
 
 
 def parse_args() -> argparse.Namespace:

@@ -6,6 +6,29 @@ This repository now ships one stable production path instead of multiple competi
 
 It also includes a live-meeting workspace: start a session, stream speech or paste transcript updates, and use the in-meeting copilot as a companion popup for catch-up questions.
 
+## Organizations, Licensing, and Usage
+
+BoardSight now treats an organization workspace as the commercial boundary. Existing accounts are migrated lazily into a personal workspace without losing their meetings. New team workspaces start on the Starter trial and support four workspace-only roles:
+
+- `owner`: billing, licenses, invitations, and workspace settings
+- `admin`: member and integration management
+- `member`: licensed meeting and Live Copilot processing
+- `viewer`: free access to shared results without initiating paid processing
+
+Workspace roles are deliberately separate from the application-level administrator role. Recorded meetings, live sessions, usage reservations, and GitLab sync records are organization-scoped. Processing reserves pooled minutes before work begins, then commits actual usage or releases the reservation after a failure.
+
+Built-in entitlements match the initial INR packaging:
+
+| Plan | Licensed members | Pooled minutes/month | Intended price |
+| --- | ---: | ---: | ---: |
+| Personal | 1 | 300 | ₹199/month |
+| Starter | 3 | 1,200 | ₹499/month |
+| Growth | 10 | 4,000 | ₹999/month |
+
+Initial customers can be activated manually through `PUT /api/v1/admin/workspaces/{organization_id}/subscription` by a global BoardSight administrator. Payment-provider webhooks and transactional invitation email are intentionally not enabled yet; workspace owners currently receive a shareable seven-day invitation link in the UI.
+
+The browser sends `X-BoardSight-Workspace-ID` for workspace-scoped requests. If omitted, the service selects the user's personal or first available workspace.
+
 ## Production Pipeline
 
 BoardSight now runs a single production pipeline for recorded meetings:

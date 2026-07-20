@@ -29,6 +29,8 @@ def init_storage(database_path: Path) -> None:
         CREATE TABLE IF NOT EXISTS meetings (
             id {numeric_id_type}{auto_increment},
             user_id {"BIGINT" if is_postgres(database_path) else "INTEGER"},
+            organization_id {"BIGINT" if is_postgres(database_path) else "INTEGER"},
+            created_by_user_id {"BIGINT" if is_postgres(database_path) else "INTEGER"},
             username TEXT,
             run_name TEXT,
             input_video TEXT NOT NULL,
@@ -62,6 +64,8 @@ def init_storage(database_path: Path) -> None:
     existing_columns = table_columns(database_path, "meetings")
     required_columns: dict[str, str] = {
         "user_id": "BIGINT" if is_postgres(database_path) else "INTEGER",
+        "organization_id": "BIGINT" if is_postgres(database_path) else "INTEGER",
+        "created_by_user_id": "BIGINT" if is_postgres(database_path) else "INTEGER",
         "username": "TEXT",
         "run_name": "TEXT",
         "output_dir": "TEXT",
@@ -96,6 +100,8 @@ def init_storage(database_path: Path) -> None:
         CREATE TABLE IF NOT EXISTS live_sessions (
             id {numeric_id_type}{auto_increment},
             user_id {"BIGINT" if is_postgres(database_path) else "INTEGER"},
+            organization_id {"BIGINT" if is_postgres(database_path) else "INTEGER"},
+            created_by_user_id {"BIGINT" if is_postgres(database_path) else "INTEGER"},
             username TEXT,
             title TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'active',
@@ -122,6 +128,8 @@ def init_storage(database_path: Path) -> None:
         live_session_columns = table_columns(database_path, "live_sessions")
     required_live_session_columns: dict[str, str] = {
         "user_id": "BIGINT" if is_postgres(database_path) else "INTEGER",
+        "organization_id": "BIGINT" if is_postgres(database_path) else "INTEGER",
+        "created_by_user_id": "BIGINT" if is_postgres(database_path) else "INTEGER",
         "username": "TEXT",
         "status": "TEXT NOT NULL DEFAULT 'active'",
         "transcript_text": "TEXT DEFAULT ''",
@@ -212,6 +220,7 @@ def save_meeting_result(
     result_file: Path | None = None,
     user_id: int | None = None,
     username: str | None = None,
+    organization_id: int | None = None,
 ) -> int:
     init_storage(database_path)
     payload = encrypt_text(json.dumps(result.to_dict()))
@@ -230,6 +239,8 @@ def save_meeting_result(
         """
         INSERT INTO meetings (
             user_id,
+            organization_id,
+            created_by_user_id,
             username,
             run_name,
             input_video,
@@ -257,6 +268,8 @@ def save_meeting_result(
             result_json
         ) VALUES (
             :user_id,
+            :organization_id,
+            :created_by_user_id,
             :username,
             :run_name,
             :input_video,
@@ -286,6 +299,8 @@ def save_meeting_result(
         """,
         {
             "user_id": user_id,
+            "organization_id": organization_id,
+            "created_by_user_id": user_id,
             "username": username,
             "run_name": output_dir.name if output_dir is not None else None,
             "input_video": result.input_video,
@@ -315,12 +330,14 @@ def save_meeting_result(
     )
 
 
-def list_meeting_results(database_path: Path, user_id: int | None = None) -> list[dict]:
+def list_meeting_results(database_path: Path, user_id: int | None = None, organization_id: int | None = None) -> list[dict]:
     init_storage(database_path)
     query = """
         SELECT
             id,
             user_id,
+            organization_id,
+            created_by_user_id,
             username,
             run_name,
             input_video,
@@ -348,18 +365,24 @@ def list_meeting_results(database_path: Path, user_id: int | None = None) -> lis
         FROM meetings
     """
     params: dict[str, object] = {}
-    if user_id is not None:
+    if organization_id is not None:
+        query += " WHERE organization_id = :organization_id"
+        params["organization_id"] = organization_id
+    elif user_id is not None:
         query += " WHERE user_id = :user_id"
         params["user_id"] = user_id
     query += " ORDER BY id DESC"
     return fetchall(database_path, query, params)
 
 
-def get_meeting_result(database_path: Path, meeting_id: int, user_id: int | None = None) -> dict | None:
+def get_meeting_result(database_path: Path, meeting_id: int, user_id: int | None = None, organization_id: int | None = None) -> dict | None:
     init_storage(database_path)
     query = "SELECT * FROM meetings WHERE id = :meeting_id"
     params: dict[str, object] = {"meeting_id": meeting_id}
-    if user_id is not None:
+    if organization_id is not None:
+        query += " AND organization_id = :organization_id"
+        params["organization_id"] = organization_id
+    elif user_id is not None:
         query += " AND user_id = :user_id"
         params["user_id"] = user_id
     row = fetchone(database_path, query, params)
@@ -375,8 +398,9 @@ def update_meeting_workflow_editor(
     meeting_id: int,
     workflow_editor: dict,
     user_id: int | None = None,
+    organization_id: int | None = None,
 ) -> dict | None:
-    record = get_meeting_result(database_path, meeting_id, user_id=user_id)
+    record = get_meeting_result(database_path, meeting_id, user_id=user_id, organization_id=organization_id)
     if record is None:
         return None
     payload = json.loads(str(record.get("result_json") or "{}"))
@@ -393,15 +417,15 @@ def update_meeting_workflow_editor(
             "result_json": encrypt_text(json.dumps(payload)),
         },
     )
-    return get_meeting_result(database_path, meeting_id, user_id=user_id)
+    return get_meeting_result(database_path, meeting_id, user_id=user_id, organization_id=organization_id)
 
 
-def create_live_session(database_path: Path, title: str, user_id: int | None = None, username: str | None = None) -> int:
+def create_live_session(database_path: Path, title: str, user_id: int | None = None, username: str | None = None, organization_id: int | None = None) -> int:
     init_storage(database_path)
     live_session_columns = table_columns(database_path, "live_sessions")
-    params: dict[str, object] = {"user_id": user_id, "username": username, "title": encrypt_text(title)}
-    insert_columns = ["user_id", "username", "title"]
-    insert_values = [":user_id", ":username", ":title"]
+    params: dict[str, object] = {"user_id": user_id, "organization_id": organization_id, "created_by_user_id": user_id, "username": username, "title": encrypt_text(title)}
+    insert_columns = ["user_id", "organization_id", "created_by_user_id", "username", "title"]
+    insert_values = [":user_id", ":organization_id", ":created_by_user_id", ":username", ":title"]
     if "session_id" in live_session_columns:
         params["session_id"] = f"live-{uuid4().hex}"
         insert_columns.insert(0, "session_id")
@@ -463,12 +487,14 @@ def append_live_session_event(
     return event_id
 
 
-def list_live_sessions(database_path: Path, user_id: int | None = None, status: str | None = None) -> list[dict]:
+def list_live_sessions(database_path: Path, user_id: int | None = None, status: str | None = None, organization_id: int | None = None) -> list[dict]:
     init_storage(database_path)
     query = """
         SELECT
             id,
             user_id,
+            organization_id,
+            created_by_user_id,
             username,
             title,
             status,
@@ -482,7 +508,10 @@ def list_live_sessions(database_path: Path, user_id: int | None = None, status: 
     """
     params: dict[str, object] = {}
     filters: list[str] = []
-    if user_id is not None:
+    if organization_id is not None:
+        filters.append("organization_id = :organization_id")
+        params["organization_id"] = organization_id
+    elif user_id is not None:
         filters.append("user_id = :user_id")
         params["user_id"] = user_id
     if status is not None:
@@ -500,11 +529,14 @@ def list_live_sessions(database_path: Path, user_id: int | None = None, status: 
     return rows
 
 
-def get_live_session(database_path: Path, session_id: int, user_id: int | None = None) -> dict | None:
+def get_live_session(database_path: Path, session_id: int, user_id: int | None = None, organization_id: int | None = None) -> dict | None:
     init_storage(database_path)
     query = "SELECT * FROM live_sessions WHERE id = :session_id"
     params: dict[str, object] = {"session_id": session_id}
-    if user_id is not None:
+    if organization_id is not None:
+        query += " AND organization_id = :organization_id"
+        params["organization_id"] = organization_id
+    elif user_id is not None:
         query += " AND user_id = :user_id"
         params["user_id"] = user_id
     row = fetchone(database_path, query, params)

@@ -16,6 +16,8 @@ const state = {
   authMode: "signin",
   currentUser: DEFAULT_USER,
   authToken: localStorage.getItem("boardsight-token") || "",
+  workspaces: [],
+  currentWorkspaceId: localStorage.getItem("boardsight-workspace-id") || "",
   theme: localStorage.getItem("boardsight-theme") || "dark",
   demoGuide: []
 };
@@ -46,6 +48,7 @@ function apiUrl(path) {
 
 const urlParams = new URLSearchParams(window.location.search);
 const isLiveCopilotPopup = urlParams.get("popup") === "live-copilot";
+const pendingWorkspaceInvite = urlParams.get("workspace_invite") || "";
 
 document.body.dataset.theme = state.theme;
 document.body.classList.toggle("popup-live-copilot", isLiveCopilotPopup);
@@ -147,6 +150,16 @@ const workflowNewBtn = document.getElementById("workflowNewBtn");
 const workflowSaveBtn = document.getElementById("workflowSaveBtn");
 const workflowComponentButtons = Array.from(document.querySelectorAll(".workflow-component-btn"));
 const floatingLiveLauncher = document.getElementById("floatingLiveLauncher");
+const workspaceSelector = document.getElementById("workspaceSelector");
+const workspacePlanSummary = document.getElementById("workspacePlanSummary");
+const workspaceNameInput = document.getElementById("workspaceNameInput");
+const workspaceCreateBtn = document.getElementById("workspaceCreateBtn");
+const workspaceStatus = document.getElementById("workspaceStatus");
+const workspaceInviteEmail = document.getElementById("workspaceInviteEmail");
+const workspaceInviteRole = document.getElementById("workspaceInviteRole");
+const workspaceInviteBtn = document.getElementById("workspaceInviteBtn");
+const workspaceInviteResult = document.getElementById("workspaceInviteResult");
+const workspaceMemberList = document.getElementById("workspaceMemberList");
 
 let liveRefreshHandle = null;
 let liveRecognition = null;
@@ -157,6 +170,18 @@ let liveScreenCaptureHandle = null;
 let liveScreenVideo = null;
 let liveScreenCanvas = null;
 let authRequestInFlight = false;
+
+workspaceSelector?.addEventListener("change", async () => {
+  state.currentWorkspaceId = workspaceSelector.value;
+  localStorage.setItem("boardsight-workspace-id", state.currentWorkspaceId);
+  state.currentMeetingId = null;
+  state.currentMeeting = null;
+  state.liveSession = null;
+  await Promise.all([loadMeetings(), loadActiveLiveSession(), loadWorkspaceSettings()]);
+});
+
+workspaceCreateBtn?.addEventListener("click", createBoardSightWorkspace);
+workspaceInviteBtn?.addEventListener("click", inviteWorkspaceMember);
 
 themeToggle.addEventListener("click", () => {
   state.theme = state.theme === "light" ? "dark" : "light";
@@ -480,6 +505,12 @@ async function bootstrapSession() {
     const response = await apiFetch("/api/v1/me");
     const payload = await response.json();
     state.currentUser = normalizeUser(payload);
+    if (payload.workspace?.id) {
+      state.currentWorkspaceId = String(payload.workspace.id);
+      localStorage.setItem("boardsight-workspace-id", state.currentWorkspaceId);
+    }
+    await loadWorkspaces();
+    await acceptPendingWorkspaceInvitation();
     updateUserChip();
     closeAuthModal();
     loginView.classList.add("hidden");
@@ -623,6 +654,8 @@ async function activateAuthenticatedApp(payload, options = {}) {
   closeAuthModal();
   loginView.classList.add("hidden");
   appView.classList.remove("hidden");
+  await loadWorkspaces();
+  await acceptPendingWorkspaceInvitation();
   if (isLiveCopilotPopup) {
     activateLivePopupMode();
   }
@@ -657,10 +690,13 @@ function clearSession() {
   state.selectedWorkflowNodeId = null;
   state.liveSession = null;
   state.meetings = [];
+  state.workspaces = [];
+  state.currentWorkspaceId = "";
   state.sessionHasProcessed = false;
   state.demoGuide = [];
   state.currentUser = DEFAULT_USER;
   localStorage.removeItem("boardsight-token");
+  localStorage.removeItem("boardsight-workspace-id");
   stopLiveListening();
   stopLiveScreenCapture();
   stopLivePolling();
@@ -721,6 +757,146 @@ function updateNotificationsPanel() {
     item.textContent = message;
     notificationsPanel.appendChild(item);
   });
+}
+
+async function loadWorkspaces() {
+  if (!state.authToken) {
+    return;
+  }
+  const response = await apiFetch("/api/v1/workspaces");
+  if (!response.ok) {
+    return;
+  }
+  const payload = await response.json();
+  state.workspaces = Array.isArray(payload.items) ? payload.items : [];
+  const selectedExists = state.workspaces.some((workspace) => String(workspace.id) === String(state.currentWorkspaceId));
+  if (!selectedExists && state.workspaces.length) {
+    state.currentWorkspaceId = String(state.workspaces[0].id);
+    localStorage.setItem("boardsight-workspace-id", state.currentWorkspaceId);
+  }
+  renderWorkspaceSelector();
+  await loadWorkspaceSettings();
+}
+
+async function acceptPendingWorkspaceInvitation() {
+  if (!pendingWorkspaceInvite || !state.authToken) {
+    return;
+  }
+  const response = await apiFetch(`/api/v1/workspaces/invitations/${encodeURIComponent(pendingWorkspaceInvite)}/accept`, {
+    method: "POST"
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    state.demoGuide = [normalizeMessage(payload.detail || "Unable to accept the workspace invitation.")];
+    updateNotificationsPanel();
+    return;
+  }
+  state.currentWorkspaceId = String(payload.workspace.id);
+  localStorage.setItem("boardsight-workspace-id", state.currentWorkspaceId);
+  urlParams.delete("workspace_invite");
+  const remainingQuery = urlParams.toString();
+  window.history.replaceState({}, "", `${window.location.pathname}${remainingQuery ? `?${remainingQuery}` : ""}`);
+  await loadWorkspaces();
+}
+
+function renderWorkspaceSelector() {
+  if (!workspaceSelector) {
+    return;
+  }
+  workspaceSelector.innerHTML = state.workspaces.map((workspace) => (
+    `<option value="${escapeHtml(String(workspace.id))}"${String(workspace.id) === String(state.currentWorkspaceId) ? " selected" : ""}>${escapeHtml(workspace.name || "Workspace")}</option>`
+  )).join("");
+}
+
+async function loadWorkspaceSettings() {
+  if (!state.currentWorkspaceId) {
+    return;
+  }
+  const current = state.workspaces.find((workspace) => String(workspace.id) === String(state.currentWorkspaceId));
+  if (workspacePlanSummary && current) {
+    const usage = current.usage || {};
+    workspacePlanSummary.innerHTML = `
+      <span><strong>${escapeHtml(prettifyRole(current.plan_code || "personal"))}</strong><small>${escapeHtml(prettifyRole(current.role || "member"))}</small></span>
+      <strong>${Number(usage.used_minutes || 0).toFixed(1)} / ${Number(usage.monthly_minute_limit || 0).toFixed(0)} min</strong>
+    `;
+  }
+  const response = await apiFetch(`/api/v1/workspaces/${encodeURIComponent(state.currentWorkspaceId)}/members`);
+  if (!response.ok) {
+    return;
+  }
+  const payload = await response.json();
+  renderWorkspaceMembers(payload.items || []);
+  const canManage = ["owner", "admin"].includes(String(current?.role || "").toLowerCase());
+  workspaceInviteEmail?.toggleAttribute("disabled", !canManage);
+  workspaceInviteRole?.toggleAttribute("disabled", !canManage);
+  workspaceInviteBtn?.toggleAttribute("disabled", !canManage);
+}
+
+function renderWorkspaceMembers(members) {
+  if (!workspaceMemberList) {
+    return;
+  }
+  if (!members.length) {
+    workspaceMemberList.innerHTML = '<div class="empty-state">No workspace members yet.</div>';
+    return;
+  }
+  workspaceMemberList.innerHTML = members.map((member) => `
+    <div class="meeting-item workspace-member-item">
+      <div class="meeting-meta">
+        <strong>${escapeHtml(member.display_name || member.username || `User ${member.user_id}`)}</strong>
+        <span class="muted">${escapeHtml(member.email || "")}</span>
+      </div>
+      <span class="meeting-pill">${escapeHtml(prettifyRole(member.role || "member"))}</span>
+      <span class="meeting-pill">${escapeHtml(member.license_status === "active" ? "Licensed" : "Viewer")}</span>
+    </div>
+  `).join("");
+}
+
+async function createBoardSightWorkspace() {
+  const name = workspaceNameInput?.value.trim() || "";
+  if (!name) {
+    if (workspaceStatus) workspaceStatus.textContent = "Enter a workspace name.";
+    return;
+  }
+  const response = await apiFetch("/api/v1/workspaces", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name })
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    if (workspaceStatus) workspaceStatus.textContent = normalizeMessage(payload.detail || "Unable to create workspace.");
+    return;
+  }
+  state.currentWorkspaceId = String(payload.workspace.id);
+  localStorage.setItem("boardsight-workspace-id", state.currentWorkspaceId);
+  if (workspaceNameInput) workspaceNameInput.value = "";
+  if (workspaceStatus) workspaceStatus.textContent = "Workspace created with a Starter trial.";
+  await loadWorkspaces();
+  await Promise.all([loadMeetings(), loadActiveLiveSession()]);
+}
+
+async function inviteWorkspaceMember() {
+  const email = workspaceInviteEmail?.value.trim().toLowerCase() || "";
+  const role = workspaceInviteRole?.value || "member";
+  if (!email || !state.currentWorkspaceId) {
+    if (workspaceInviteResult) workspaceInviteResult.textContent = "Enter the member's email address.";
+    return;
+  }
+  const response = await apiFetch(`/api/v1/workspaces/${encodeURIComponent(state.currentWorkspaceId)}/invitations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, role })
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    if (workspaceInviteResult) workspaceInviteResult.textContent = normalizeMessage(payload.detail || "Unable to create invitation.");
+    return;
+  }
+  const token = payload.invitation?.token || "";
+  const inviteLink = `${window.location.origin}${window.location.pathname}?workspace_invite=${encodeURIComponent(token)}`;
+  if (workspaceInviteResult) workspaceInviteResult.textContent = `Invitation created for ${email}. Share this link: ${inviteLink}`;
+  if (workspaceInviteEmail) workspaceInviteEmail.value = "";
 }
 
 async function loadMeetings() {
@@ -3547,6 +3723,9 @@ async function apiFetch(url, options = {}) {
   const headers = new Headers(options.headers || {});
   if (state.authToken) {
     headers.set("Authorization", `Bearer ${state.authToken}`);
+  }
+  if (state.currentWorkspaceId && url !== "/api/v1/me") {
+    headers.set("X-BoardSight-Workspace-ID", state.currentWorkspaceId);
   }
   const response = await fetch(apiUrl(url), { ...options, headers });
   if (response.status === 401) {
