@@ -83,16 +83,27 @@ body {
 }
 .brand-copy { display: flex; align-items: center; gap: 14px; }
 .brand-mark {
-  width: 56px; height: 56px; border-radius: 14px; display: grid; place-items: center;
-  font-size: 28px; font-weight: 800; color: white;
-  background: linear-gradient(135deg, var(--primary), #8b5cf6); box-shadow: 0 16px 40px rgba(99, 102, 241, 0.28);
+  width: 56px;
+  height: 56px;
+  display: block;
+  object-fit: contain;
+  filter: drop-shadow(0 16px 34px rgba(29, 78, 216, 0.20));
 }
 .brand-mark.small {
   width: 28px;
   height: 28px;
-  border-radius: 8px;
-  font-size: 14px;
-  box-shadow: none;
+  filter: none;
+}
+.brand-wordmark {
+  display: block;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+.brand-wordmark-nav {
+  height: 42px;
+  max-width: min(260px, 32vw);
+  filter: drop-shadow(0 12px 28px rgba(29, 78, 216, 0.14));
 }
 .brand-panel h1 { margin: 16px 0 8px; font-size: 26px; letter-spacing: -0.02em; }
 .tagline { font-size: 14px; line-height: 1.45; max-width: none; margin: 0; color: var(--muted); }
@@ -179,18 +190,10 @@ body:has(.landing-auth:not(.hidden)),
 .landing-brand {
   display: inline-flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
   font-size: 24px;
   font-weight: 700;
   letter-spacing: -0.03em;
-}
-
-.landing-brand .brand-mark.small {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  font-size: 18px;
-  box-shadow: 0 18px 40px rgba(99, 102, 241, 0.28);
 }
 
 .landing-links,
@@ -1089,6 +1092,10 @@ body[data-theme="light"] .notification-item {
   gap: 10px;
   padding: 8px 6px 18px;
   margin-bottom: 8px;
+}
+.sidebar-brand .brand-mark.small {
+  width: 32px;
+  height: 32px;
 }
 .nav-group { display: grid; gap: 8px; }
 .nav-label { font-size: 11px; text-transform: uppercase; color: var(--muted); margin: 8px 0 4px; }
@@ -2450,5 +2457,9 @@ body.popup-live-copilot #liveCopilotAnswer {
     width: min(520px, calc(100vw - 20px));
     max-height: calc(100vh - 16px);
     padding: 22px 18px 16px;
+  }
+  .brand-wordmark-nav {
+    height: 34px;
+    max-width: min(220px, 58vw);
   }
 }

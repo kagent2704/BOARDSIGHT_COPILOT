@@ -4,13 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>BoardSight</title>
-  <link rel="stylesheet" href="/styles.css?v=20260720-demo-layout-fix2">
+  <link rel="stylesheet" href="/styles.css?v=20260720-logo-refresh1">
 </head>
 <body data-theme="dark">
   <div class="app-shell">
     <aside class="brand-panel">
       <div class="brand-copy">
-        <div class="brand-mark">B</div>
+        <img class="brand-mark" src="/assets/boardsight-mark.png" alt="BoardSight logo">
         <div>
           <h1>BoardSight</h1>
           <p class="tagline">Modern. Intelligent. Focused.</p>
@@ -23,8 +23,7 @@
       <section id="loginView" class="auth-panel panel elevated landing-auth">
         <header class="landing-nav">
           <div class="landing-brand">
-            <div class="brand-mark small">B</div>
-            <strong>BoardSight</strong>
+            <img class="brand-wordmark brand-wordmark-nav" src="/assets/boardsight-wordmark.png" alt="BoardSight">
           </div>
           <nav class="landing-links" aria-label="BoardSight">
             <a href="#product">Product</a>
@@ -342,7 +341,7 @@
         <div class="layout-grid">
           <nav class="sidebar panel">
             <div class="sidebar-brand">
-              <div class="brand-mark small">B</div>
+              <img class="brand-mark small" src="/assets/boardsight-mark.png" alt="BoardSight logo">
               <strong>BoardSight</strong>
             </div>
             <div class="nav-group">
@@ -355,7 +354,9 @@
             </div>
             <div class="nav-group">
               <div class="nav-label">Workspace</div>
-              <div class="workspace-chip">BoardSight Team</div>
+              <select id="workspaceSelector" class="workspace-chip" aria-label="Active workspace">
+                <option>Loading workspace...</option>
+              </select>
               <button class="nav-item" data-view="admin">Settings</button>
             </div>
             <div class="user-chip">
@@ -718,11 +719,28 @@
             <article class="panel admin-layout">
               <div class="panel-title-row">
                 <div>
-                  <h3>Admin Settings</h3>
-                  <p class="muted">Configure BoardSight system parameters</p>
+                  <h3>Workspace Settings</h3>
+                  <p class="muted">Manage licensed members, pooled usage, and workspace access.</p>
                 </div>
               </div>
               <div class="settings-grid">
+                <div class="panel nested">
+                  <h4>Workspace &amp; Plan</h4>
+                  <div id="workspacePlanSummary" class="speaker-row"><span>Loading workspace...</span></div>
+                  <label>Create another workspace<input id="workspaceNameInput" type="text" placeholder="Acme Governance"></label>
+                  <button id="workspaceCreateBtn" class="primary-btn" type="button">Create Workspace</button>
+                  <div id="workspaceStatus" class="upload-status"></div>
+                </div>
+                <div class="panel nested">
+                  <h4>Members &amp; Licenses</h4>
+                  <div class="settings-grid compact-grid">
+                    <label>Email<input id="workspaceInviteEmail" type="email" placeholder="member@company.com"></label>
+                    <label>Role<select id="workspaceInviteRole"><option value="member">Licensed member</option><option value="admin">Workspace admin</option><option value="viewer">Free viewer</option></select></label>
+                  </div>
+                  <button id="workspaceInviteBtn" class="primary-btn" type="button">Create Invitation</button>
+                  <div id="workspaceInviteResult" class="upload-status"></div>
+                  <div id="workspaceMemberList" class="meeting-list"><div class="empty-state">No members loaded.</div></div>
+                </div>
                 <div class="panel nested">
                   <h4>Analysis Settings</h4>
                   <label>Dominance Threshold<input type="range" value="35"></label>
@@ -751,7 +769,7 @@
     </div>
   </div>
   <button id="floatingLiveLauncher" class="floating-live-launcher hidden" type="button">Open Live Copilot</button>
-  <script src="/app.js?v=20260720-demo-layout-fix2"></script>
+  <script src="/app.js?v=20260720-logo-refresh1"></script>
 </body>
 </html>
 
