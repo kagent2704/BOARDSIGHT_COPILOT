@@ -169,8 +169,8 @@ body[data-theme="light"] .workspace-switcher-menu { background: #fff; }
   object-fit: contain;
 }
 .brand-wordmark-nav {
-  height: 72px;
-  max-width: min(520px, 46vw);
+  height: 88px;
+  max-width: min(620px, 52vw);
   filter: drop-shadow(0 16px 34px rgba(37, 99, 235, 0.18));
 }
 .brand-panel h1 { margin: 16px 0 8px; font-size: 26px; letter-spacing: -0.02em; }
@@ -259,7 +259,7 @@ body:has(.landing-auth:not(.hidden)),
   display: inline-flex;
   align-items: center;
   gap: 14px;
-  min-height: 76px;
+  min-height: 92px;
   font-size: 24px;
   font-weight: 700;
   letter-spacing: -0.03em;
@@ -2535,7 +2535,16 @@ body.popup-live-copilot #liveCopilotAnswer {
     padding: 22px 18px 16px;
   }
   .brand-wordmark-nav {
-    height: 48px;
-    max-width: min(340px, 72vw);
+    height: 58px;
+    max-width: min(400px, 76vw);
   }
+}
+
+@media (min-width: 1101px) and (max-width: 1400px) {
+  .layout-grid { grid-template-columns: 220px minmax(0, 1fr); }
+  .sidebar { position: sticky; min-height: calc(100vh - 120px); }
+}
+
+@media (max-width: 1100px) {
+  .sidebar { min-height: auto; }
 }
