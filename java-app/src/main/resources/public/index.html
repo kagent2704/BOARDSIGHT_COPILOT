@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>BoardSight</title>
-  <link rel="stylesheet" href="/styles.css?v=20260720-billing1">
+  <link rel="stylesheet" href="/styles.css?v=20260720-landing-refresh1">
 </head>
 <body data-theme="dark">
   <div class="app-shell">
@@ -38,14 +38,16 @@
             >
           </div>
           <nav class="landing-links" aria-label="BoardSight">
+            <a href="#about">About</a>
             <a href="#product">Product</a>
             <a href="#solutions">Solutions</a>
+            <a href="#pricing">Pricing</a>
             <a href="#security">Security</a>
             <a href="#resources">Resources</a>
           </nav>
           <div class="landing-actions">
             <button id="landingThemeToggle" class="landing-nav-btn landing-theme-btn" type="button">Theme</button>
-            <button id="authOpenBtn" class="landing-nav-btn" type="button">Sign In</button>
+            <button id="authOpenBtn" class="landing-nav-btn landing-signin-btn" type="button">Sign In</button>
             <button id="authSignupBtn" class="landing-nav-btn landing-signup-btn" type="button">Sign Up</button>
           </div>
         </header>
@@ -57,7 +59,7 @@
               <span>conversations to</span>
               <span class="headline-accent headline-accent-nowrap">confident decisions.</span>
             </h2>
-            <p class="landing-lead">BoardSight turns meetings into decision trails, accountable workflows, and actionable outcomes your team can trust.</p>
+            <p class="landing-lead">Capture every decision, assign accountability automatically, and turn meetings into measurable execution.</p>
             <div class="landing-cta-row">
               <button id="guestHeroBtn" type="button" class="primary-btn landing-demo-btn">Explore Demo</button>
             </div>
@@ -67,6 +69,10 @@
             <div class="orbital-ring orbital-ring-outer"></div>
             <div class="orbital-ring orbital-ring-mid"></div>
             <div class="orbital-ring orbital-ring-inner"></div>
+            <span class="orbital-particle orbital-particle-one"></span>
+            <span class="orbital-particle orbital-particle-two"></span>
+            <span class="orbital-particle orbital-particle-three"></span>
+            <span class="orbital-particle orbital-particle-four"></span>
             <span class="orbital-star orbital-star-one"></span>
             <span class="orbital-star orbital-star-two"></span>
             <span class="orbital-star orbital-star-three"></span>
@@ -75,7 +81,13 @@
               <span class="orbital-kicker">BoardSight</span>
               <strong>Decisions<br>to Execution</strong>
               <div class="orbital-divider"></div>
-              <small>Trace <span>|</span> Workflow <span>|</span> Reports</small>
+              <small class="orbital-signal-row">
+                <span class="orbital-signal orbital-signal-one">Trace</span>
+                <span class="orbital-separator">|</span>
+                <span class="orbital-signal orbital-signal-two">Workflow</span>
+                <span class="orbital-separator">|</span>
+                <span class="orbital-signal orbital-signal-three">Reports</span>
+              </small>
             </div>
           </div>
         </div>
@@ -134,6 +146,28 @@
           </article>
         </section>
         <section class="landing-sections">
+          <article id="about" class="landing-detail-block">
+            <div class="landing-section-heading">
+              <span class="landing-section-kicker">About</span>
+              <h3>BoardSight is built for teams that need the meeting itself to become an operating system for follow-through.</h3>
+              <p>Instead of leaving governance reviews trapped in transcripts and memory, BoardSight converts them into a structured chain of decisions, accountability, workflows, blockers, and export-ready evidence.</p>
+            </div>
+            <div class="landing-detail-grid">
+              <div class="landing-detail-card">
+                <strong>Decision intelligence first</strong>
+                <p>BoardSight is centered on decision quality, rationale, and ownership rather than generic AI summaries.</p>
+              </div>
+              <div class="landing-detail-card">
+                <strong>Execution visibility by default</strong>
+                <p>Each meeting can surface action registers, workflow paths, blockers, and GitLab-ready follow-through instead of passive notes.</p>
+              </div>
+              <div class="landing-detail-card">
+                <strong>Built for real governance work</strong>
+                <p>Use it across board reviews, launch checkpoints, compliance escalations, and internal operating cadences that need traceability.</p>
+              </div>
+            </div>
+          </article>
+
           <article id="product" class="landing-detail-block">
             <div class="landing-section-heading">
               <span class="landing-section-kicker">Product</span>
@@ -177,6 +211,31 @@
                 <span>3</span>
                 <strong>Execute</strong>
                 <p>Push follow-through into GitLab, editable workflows, and exportable registers.</p>
+              </div>
+            </div>
+          </article>
+
+          <article id="pricing" class="landing-detail-block">
+            <div class="landing-section-heading">
+              <span class="landing-section-kicker">Pricing</span>
+              <h3>Simple account-scoped plans for early teams, with enough structure to scale into heavier usage later.</h3>
+              <p>BoardSight pricing is designed to stay practical while supporting recorded analysis, live copilot usage, structured exports, and execution workflows.</p>
+            </div>
+            <div class="landing-pricing-grid">
+              <div class="landing-pricing-card">
+                <strong>Starter</strong>
+                <span class="landing-price">For early teams</span>
+                <p>Good for recurring internal reviews, leadership syncs, and teams building an execution trail across a smaller number of meetings.</p>
+              </div>
+              <div class="landing-pricing-card landing-pricing-card-featured">
+                <strong>Growth</strong>
+                <span class="landing-price">For active operating rhythms</span>
+                <p>Best for organizations running frequent recorded and live sessions, with heavier export and workflow modelling needs.</p>
+              </div>
+              <div class="landing-pricing-card">
+                <strong>Custom</strong>
+                <span class="landing-price">For enterprise rollouts</span>
+                <p>For high-volume teams that need tailored limits, support expectations, retention controls, and commercial review.</p>
               </div>
             </div>
           </article>

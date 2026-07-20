@@ -169,8 +169,8 @@ body[data-theme="light"] .workspace-switcher-menu { background: #fff; }
   object-fit: contain;
 }
 .brand-wordmark-nav {
-  height: 116px;
-  max-width: min(820px, 64vw);
+  height: 152px;
+  max-width: min(980px, 70vw);
   filter: drop-shadow(0 16px 34px rgba(37, 99, 235, 0.18));
 }
 .brand-panel h1 { margin: 16px 0 8px; font-size: 26px; letter-spacing: -0.02em; }
@@ -259,7 +259,7 @@ body:has(.landing-auth:not(.hidden)),
   display: inline-flex;
   align-items: center;
   gap: 14px;
-  min-height: 122px;
+  min-height: 158px;
   font-size: 24px;
   font-weight: 700;
   letter-spacing: -0.03em;
@@ -272,7 +272,7 @@ body:has(.landing-auth:not(.hidden)),
 }
 
 .landing-links {
-  gap: 56px;
+  gap: 44px;
 }
 
 .landing-links a {
@@ -289,6 +289,19 @@ body:has(.landing-auth:not(.hidden)),
   background: rgba(10, 12, 31, 0.35);
   color: var(--text);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+}
+
+.landing-signin-btn {
+  border-color: rgba(130, 122, 255, 0.12);
+  background: rgba(10, 12, 31, 0.14);
+  color: rgba(248, 250, 252, 0.82);
+}
+
+.landing-signup-btn {
+  border-color: rgba(124, 108, 255, 0.52);
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.96), rgba(139, 92, 246, 0.96));
+  color: #f8fafc;
+  box-shadow: 0 14px 32px rgba(99, 102, 241, 0.24), inset 0 1px 0 rgba(255,255,255,0.16);
 }
 
 .landing-actions {
@@ -377,6 +390,7 @@ body:has(.landing-auth:not(.hidden)),
   border-radius: 50%;
   transform: translate(-50%, -50%) rotate(-12deg) scaleY(0.78);
   transform-origin: center;
+  animation: orbitalSpin 28s linear infinite;
 }
 
 .orbital-ring-outer {
@@ -392,12 +406,15 @@ body:has(.landing-auth:not(.hidden)),
   width: 454px;
   height: 454px;
   border: 1px dashed rgba(113, 92, 255, 0.12);
+  animation-duration: 24s;
+  animation-direction: reverse;
 }
 
 .orbital-ring-inner {
   width: 414px;
   height: 414px;
   border: 1px solid rgba(151, 132, 255, 0.09);
+  animation-duration: 18s;
 }
 
 .orbital-star {
@@ -413,6 +430,23 @@ body:has(.landing-auth:not(.hidden)),
 .orbital-star-two { top: 156px; left: 58px; }
 .orbital-star-three { right: 118px; bottom: 108px; }
 .orbital-star-four { left: 94px; bottom: 138px; }
+
+.orbital-particle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  margin: -4px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,255,255,0.95) 0%, rgba(120, 190, 255, 0.95) 36%, rgba(120, 190, 255, 0.12) 100%);
+  box-shadow: 0 0 18px rgba(103, 170, 255, 0.82);
+}
+
+.orbital-particle-one { animation: orbitalFloatOne 14s linear infinite; }
+.orbital-particle-two { animation: orbitalFloatTwo 18s linear infinite; }
+.orbital-particle-three { animation: orbitalFloatThree 20s linear infinite; }
+.orbital-particle-four { animation: orbitalFloatFour 16s linear infinite; }
 
 .orbital-core {
   position: absolute;
@@ -436,6 +470,7 @@ body:has(.landing-auth:not(.hidden)),
     inset 28px 0 44px rgba(132, 106, 255, 0.26),
     0 0 120px rgba(99, 102, 241, 0.24);
   overflow: hidden;
+  animation: orbitalPulse 6.8s ease-in-out infinite;
 }
 
 .orbital-core::before {
@@ -506,8 +541,21 @@ body:has(.landing-auth:not(.hidden)),
   z-index: 1;
 }
 
-.orbital-core small span {
+.orbital-separator {
   color: rgba(255,255,255,0.26);
+}
+
+.orbital-signal {
+  opacity: 0.28;
+  animation: orbitalSignalFade 4.2s ease-in-out infinite;
+}
+
+.orbital-signal-two {
+  animation-delay: 1s;
+}
+
+.orbital-signal-three {
+  animation-delay: 2s;
 }
 
 .landing-feature-bar {
@@ -520,6 +568,76 @@ body:has(.landing-auth:not(.hidden)),
   background: rgba(8, 11, 24, 0.78);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
   overflow: hidden;
+}
+
+.landing-pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.landing-pricing-card {
+  padding: 24px;
+  border: 1px solid rgba(123, 110, 255, 0.12);
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+  display: grid;
+  gap: 12px;
+}
+
+.landing-pricing-card-featured {
+  border-color: rgba(129, 140, 248, 0.34);
+  box-shadow: 0 18px 40px rgba(49, 46, 129, 0.18);
+}
+
+.landing-price {
+  color: #c7d2fe;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+@keyframes orbitalSpin {
+  from { transform: translate(-50%, -50%) rotate(-12deg) scaleY(0.78); }
+  to { transform: translate(-50%, -50%) rotate(348deg) scaleY(0.78); }
+}
+
+@keyframes orbitalPulse {
+  0%, 100% {
+    box-shadow:
+      inset 28px 0 44px rgba(132, 106, 255, 0.22),
+      0 0 120px rgba(99, 102, 241, 0.2);
+  }
+  50% {
+    box-shadow:
+      inset 28px 0 58px rgba(148, 120, 255, 0.34),
+      0 0 150px rgba(99, 102, 241, 0.32);
+  }
+}
+
+@keyframes orbitalSignalFade {
+  0%, 100% { opacity: 0.28; transform: translateY(0); }
+  18%, 42% { opacity: 1; transform: translateY(-1px); }
+  60% { opacity: 0.48; }
+}
+
+@keyframes orbitalFloatOne {
+  0% { transform: rotate(0deg) translateX(244px) rotate(0deg); }
+  100% { transform: rotate(360deg) translateX(244px) rotate(-360deg); }
+}
+
+@keyframes orbitalFloatTwo {
+  0% { transform: rotate(96deg) translateX(214px) rotate(-96deg); }
+  100% { transform: rotate(456deg) translateX(214px) rotate(-456deg); }
+}
+
+@keyframes orbitalFloatThree {
+  0% { transform: rotate(188deg) translateX(266px) rotate(-188deg); }
+  100% { transform: rotate(548deg) translateX(266px) rotate(-548deg); }
+}
+
+@keyframes orbitalFloatFour {
+  0% { transform: rotate(274deg) translateX(228px) rotate(-274deg); }
+  100% { transform: rotate(634deg) translateX(228px) rotate(-634deg); }
 }
 
 .landing-feature-card {
@@ -2535,8 +2653,11 @@ body.popup-live-copilot #liveCopilotAnswer {
     padding: 22px 18px 16px;
   }
   .brand-wordmark-nav {
-    height: 72px;
-    max-width: min(500px, 82vw);
+    height: 90px;
+    max-width: min(620px, 88vw);
+  }
+  .landing-pricing-grid {
+    grid-template-columns: 1fr;
   }
 }
 
