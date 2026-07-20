@@ -1,0 +1,9 @@
+.gcloudignore
+.env
+__pycache__/
+**/__pycache__/
+*.pyc
+tests/
+requirements-dev.txt
+requirements-ml.txt
+speaker_profiles.json
