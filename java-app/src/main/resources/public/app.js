@@ -18,6 +18,8 @@ const state = {
   authToken: localStorage.getItem("boardsight-token") || "",
   workspaces: [],
   currentWorkspaceId: localStorage.getItem("boardsight-workspace-id") || "",
+  pricingPlans: [],
+  billingCycle: "monthly",
   theme: localStorage.getItem("boardsight-theme") || "dark",
   demoGuide: []
 };
@@ -52,6 +54,18 @@ const pendingWorkspaceInvite = urlParams.get("workspace_invite") || "";
 
 document.body.dataset.theme = state.theme;
 document.body.classList.toggle("popup-live-copilot", isLiveCopilotPopup);
+
+function applyThemeBrandAssets() {
+  const mode = state.theme === "light" ? "light" : "dark";
+  document.querySelectorAll(".theme-brand-asset").forEach((img) => {
+    const nextSrc = mode === "light" ? img.dataset.lightSrc : img.dataset.darkSrc;
+    if (nextSrc && img.getAttribute("src") !== nextSrc) {
+      img.setAttribute("src", nextSrc);
+    }
+  });
+}
+
+applyThemeBrandAssets();
 
 const loginView = document.getElementById("loginView");
 const appView = document.getElementById("appView");
@@ -150,7 +164,14 @@ const workflowNewBtn = document.getElementById("workflowNewBtn");
 const workflowSaveBtn = document.getElementById("workflowSaveBtn");
 const workflowComponentButtons = Array.from(document.querySelectorAll(".workflow-component-btn"));
 const floatingLiveLauncher = document.getElementById("floatingLiveLauncher");
-const workspaceSelector = document.getElementById("workspaceSelector");
+const workspaceSwitcher = document.getElementById("workspaceSwitcher");
+const workspaceSwitcherBtn = document.getElementById("workspaceSwitcherBtn");
+const workspaceSwitcherName = document.getElementById("workspaceSwitcherName");
+const workspaceSwitcherPlan = document.getElementById("workspaceSwitcherPlan");
+const workspaceSwitcherMenu = document.getElementById("workspaceSwitcherMenu");
+const sidebarUsageValue = document.getElementById("sidebarUsageValue");
+const sidebarUsageBar = document.getElementById("sidebarUsageBar");
+const sidebarPlanBadge = document.getElementById("sidebarPlanBadge");
 const workspacePlanSummary = document.getElementById("workspacePlanSummary");
 const workspaceNameInput = document.getElementById("workspaceNameInput");
 const workspaceCreateBtn = document.getElementById("workspaceCreateBtn");
@@ -160,6 +181,15 @@ const workspaceInviteRole = document.getElementById("workspaceInviteRole");
 const workspaceInviteBtn = document.getElementById("workspaceInviteBtn");
 const workspaceInviteResult = document.getElementById("workspaceInviteResult");
 const workspaceMemberList = document.getElementById("workspaceMemberList");
+const billingCurrentPlanBadge = document.getElementById("billingCurrentPlanBadge");
+const billingRemainingMinutes = document.getElementById("billingRemainingMinutes");
+const billingUsagePercent = document.getElementById("billingUsagePercent");
+const billingUsageBar = document.getElementById("billingUsageBar");
+const billingUsedMinutes = document.getElementById("billingUsedMinutes");
+const billingMinuteLimit = document.getElementById("billingMinuteLimit");
+const billingSeatUsage = document.getElementById("billingSeatUsage");
+const pricingPlanGrid = document.getElementById("pricingPlanGrid");
+const billingRequestStatus = document.getElementById("billingRequestStatus");
 
 let liveRefreshHandle = null;
 let liveRecognition = null;
@@ -171,13 +201,38 @@ let liveScreenVideo = null;
 let liveScreenCanvas = null;
 let authRequestInFlight = false;
 
-workspaceSelector?.addEventListener("change", async () => {
-  state.currentWorkspaceId = workspaceSelector.value;
+workspaceSwitcherBtn?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  const willOpen = workspaceSwitcherMenu?.classList.contains("hidden");
+  workspaceSwitcherMenu?.classList.toggle("hidden", !willOpen);
+  workspaceSwitcherBtn.setAttribute("aria-expanded", willOpen ? "true" : "false");
+});
+
+workspaceSwitcherMenu?.addEventListener("click", async (event) => {
+  const option = event.target.closest("[data-workspace-id]");
+  if (!option) return;
+  state.currentWorkspaceId = option.dataset.workspaceId;
   localStorage.setItem("boardsight-workspace-id", state.currentWorkspaceId);
+  workspaceSwitcherMenu.classList.add("hidden");
+  workspaceSwitcherBtn?.setAttribute("aria-expanded", "false");
   state.currentMeetingId = null;
   state.currentMeeting = null;
   state.liveSession = null;
+  renderWorkspaceSelector();
   await Promise.all([loadMeetings(), loadActiveLiveSession(), loadWorkspaceSettings()]);
+});
+
+document.querySelectorAll("[data-billing-cycle]").forEach((button) => {
+  button.addEventListener("click", () => {
+    state.billingCycle = button.dataset.billingCycle || "monthly";
+    document.querySelectorAll("[data-billing-cycle]").forEach((item) => item.classList.toggle("active", item === button));
+    renderBillingView();
+  });
+});
+
+pricingPlanGrid?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-request-plan]");
+  if (button) requestPlanChange(button.dataset.requestPlan);
 });
 
 workspaceCreateBtn?.addEventListener("click", createBoardSightWorkspace);
@@ -187,6 +242,7 @@ themeToggle.addEventListener("click", () => {
   state.theme = state.theme === "light" ? "dark" : "light";
   document.body.dataset.theme = state.theme;
   localStorage.setItem("boardsight-theme", state.theme);
+  applyThemeBrandAssets();
 });
 
 landingThemeToggle?.addEventListener("click", () => {
@@ -432,6 +488,10 @@ notificationsBtn?.addEventListener("click", (event) => {
 });
 
 document.addEventListener("click", (event) => {
+  if (workspaceSwitcher && !workspaceSwitcher.contains(event.target)) {
+    workspaceSwitcherMenu?.classList.add("hidden");
+    workspaceSwitcherBtn?.setAttribute("aria-expanded", "false");
+  }
   if (!notificationsPanel || !notificationsBtn) return;
   if (notificationsPanel.classList.contains("hidden")) return;
   const target = event.target;
@@ -775,7 +835,7 @@ async function loadWorkspaces() {
     localStorage.setItem("boardsight-workspace-id", state.currentWorkspaceId);
   }
   renderWorkspaceSelector();
-  await loadWorkspaceSettings();
+  await Promise.all([loadWorkspaceSettings(), loadPricingPlans()]);
 }
 
 async function acceptPendingWorkspaceInvitation() {
@@ -800,12 +860,22 @@ async function acceptPendingWorkspaceInvitation() {
 }
 
 function renderWorkspaceSelector() {
-  if (!workspaceSelector) {
+  if (!workspaceSwitcherMenu) {
     return;
   }
-  workspaceSelector.innerHTML = state.workspaces.map((workspace) => (
-    `<option value="${escapeHtml(String(workspace.id))}"${String(workspace.id) === String(state.currentWorkspaceId) ? " selected" : ""}>${escapeHtml(workspace.name || "Workspace")}</option>`
-  )).join("");
+  const current = state.workspaces.find((workspace) => String(workspace.id) === String(state.currentWorkspaceId)) || state.workspaces[0];
+  if (current) {
+    if (workspaceSwitcherName) workspaceSwitcherName.textContent = current.name || "Workspace";
+    if (workspaceSwitcherPlan) workspaceSwitcherPlan.textContent = `${prettifyRole(current.plan_code || "personal")} · ${prettifyRole(current.role || "member")}`;
+  }
+  workspaceSwitcherMenu.innerHTML = state.workspaces.map((workspace) => {
+    const selected = String(workspace.id) === String(state.currentWorkspaceId);
+    return `<button type="button" class="workspace-switcher-option${selected ? " selected" : ""}" data-workspace-id="${escapeHtml(String(workspace.id))}" role="option" aria-selected="${selected}">
+      <span class="workspace-option-mark">${escapeHtml(String(workspace.name || "W").charAt(0).toUpperCase())}</span>
+      <span><strong>${escapeHtml(workspace.name || "Workspace")}</strong><small>${escapeHtml(prettifyRole(workspace.plan_code || "personal"))}</small></span>
+      ${selected ? '<span class="workspace-option-check">✓</span>' : ""}
+    </button>`;
+  }).join("");
 }
 
 async function loadWorkspaceSettings() {
@@ -820,6 +890,7 @@ async function loadWorkspaceSettings() {
       <strong>${Number(usage.used_minutes || 0).toFixed(1)} / ${Number(usage.monthly_minute_limit || 0).toFixed(0)} min</strong>
     `;
   }
+  renderWorkspaceUsage(current);
   const response = await apiFetch(`/api/v1/workspaces/${encodeURIComponent(state.currentWorkspaceId)}/members`);
   if (!response.ok) {
     return;
@@ -830,6 +901,77 @@ async function loadWorkspaceSettings() {
   workspaceInviteEmail?.toggleAttribute("disabled", !canManage);
   workspaceInviteRole?.toggleAttribute("disabled", !canManage);
   workspaceInviteBtn?.toggleAttribute("disabled", !canManage);
+}
+
+function renderWorkspaceUsage(current) {
+  if (!current) return;
+  const usage = current.usage || {};
+  const used = Number(usage.used_minutes || 0);
+  const limit = Number(usage.monthly_minute_limit || 0);
+  const remaining = Number(usage.remaining_minutes ?? Math.max(0, limit - used));
+  const percent = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+  const planName = prettifyRole(current.plan_code || "personal");
+  if (sidebarUsageValue) sidebarUsageValue.textContent = `${formatCompactNumber(remaining)} / ${formatCompactNumber(limit)} left`;
+  if (sidebarUsageBar) sidebarUsageBar.style.width = `${percent}%`;
+  if (sidebarPlanBadge) sidebarPlanBadge.textContent = planName;
+  if (billingCurrentPlanBadge) billingCurrentPlanBadge.textContent = `${planName} · ${prettifyRole(current.subscription_status || "active")}`;
+  if (billingRemainingMinutes) billingRemainingMinutes.textContent = formatCompactNumber(remaining);
+  if (billingUsagePercent) billingUsagePercent.textContent = `${percent}% used`;
+  if (billingUsageBar) billingUsageBar.style.width = `${percent}%`;
+  if (billingUsedMinutes) billingUsedMinutes.textContent = `${formatCompactNumber(used)} minutes used`;
+  if (billingMinuteLimit) billingMinuteLimit.textContent = `${formatCompactNumber(limit)} minute limit`;
+  if (billingSeatUsage) billingSeatUsage.textContent = `${Number(usage.active_licenses || 0)} / ${Number(usage.licensed_member_limit || 0)}`;
+  renderBillingView();
+}
+
+async function loadPricingPlans() {
+  const response = await apiFetch("/api/v1/plans");
+  if (!response.ok) return;
+  const payload = await response.json();
+  state.pricingPlans = Array.isArray(payload.items) ? payload.items : [];
+  renderBillingView();
+}
+
+function renderBillingView() {
+  if (!pricingPlanGrid || !state.pricingPlans.length) return;
+  const current = state.workspaces.find((workspace) => String(workspace.id) === String(state.currentWorkspaceId));
+  const currentPlan = String(current?.plan_code || "personal");
+  const canManage = ["owner", "admin"].includes(String(current?.role || "").toLowerCase());
+  pricingPlanGrid.innerHTML = state.pricingPlans.map((plan) => {
+    const isCurrent = plan.plan_code === currentPlan;
+    const featured = plan.plan_code === "starter";
+    const annual = state.billingCycle === "annual";
+    const price = annual ? plan.annual_price_inr : plan.monthly_price_inr;
+    const priceLabel = price == null ? "Let's talk" : `₹${Number(price).toLocaleString("en-IN")}`;
+    const suffix = price == null ? "" : annual ? "/ year" : "/ month";
+    const actionLabel = isCurrent ? "Current plan" : plan.plan_code === "custom" ? "Request custom plan" : `Request ${plan.name}`;
+    const memberLabel = plan.plan_code === "custom" ? "Contracted licensed members" : `<strong>${Number(plan.licensed_members).toLocaleString("en-IN")}</strong> licensed ${Number(plan.licensed_members) === 1 ? "member" : "members"}`;
+    const minuteLabel = plan.plan_code === "custom" ? "Contracted pooled usage" : `<strong>${Number(plan.monthly_minutes).toLocaleString("en-IN")}</strong> pooled minutes/month`;
+    return `<article class="pricing-card${featured ? " featured" : ""}${isCurrent ? " current" : ""}">
+      ${featured ? '<span class="popular-plan-label">Best for teams</span>' : ""}
+      <div class="pricing-card-head"><div><span>${escapeHtml(plan.name)}</span><strong>${priceLabel}<small>${suffix}</small></strong></div>${isCurrent ? '<span class="current-dot">Current</span>' : ""}</div>
+      <ul><li>${memberLabel}</li><li>${minuteLabel}</li><li><strong>${Number(plan.retention_days)}</strong>-day meeting retention</li><li>Free viewer members</li></ul>
+      <button type="button" class="${featured && !isCurrent ? "primary-btn" : "ghost-btn"}" data-request-plan="${escapeHtml(plan.plan_code)}" ${isCurrent || !canManage ? "disabled" : ""}>${escapeHtml(actionLabel)}</button>
+    </article>`;
+  }).join("");
+}
+
+async function requestPlanChange(planCode) {
+  const current = state.workspaces.find((workspace) => String(workspace.id) === String(state.currentWorkspaceId));
+  if (!current || !planCode) return;
+  if (billingRequestStatus) billingRequestStatus.textContent = "Submitting upgrade request...";
+  const response = await apiFetch(`/api/v1/workspaces/${encodeURIComponent(current.id)}/subscription-change-requests`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ plan_code: planCode, billing_cycle: state.billingCycle })
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    if (billingRequestStatus) billingRequestStatus.textContent = normalizeMessage(payload.detail || "Unable to submit the plan request.");
+    return;
+  }
+  const plan = state.pricingPlans.find((item) => item.plan_code === planCode);
+  if (billingRequestStatus) billingRequestStatus.textContent = `${plan?.name || "Plan"} request submitted. No payment has been taken; BoardSight will confirm activation manually.`;
 }
 
 function renderWorkspaceMembers(members) {
@@ -3278,6 +3420,11 @@ function openReport(fileName) {
 function formatDate(isoString) {
   const date = new Date(isoString);
   return Number.isNaN(date.getTime()) ? "Recent" : date.toLocaleDateString("en-GB", { month: "short", day: "numeric" });
+}
+
+function formatCompactNumber(value) {
+  const number = Number(value || 0);
+  return Number.isInteger(number) ? number.toLocaleString("en-IN") : number.toLocaleString("en-IN", { maximumFractionDigits: 1 });
 }
 
 function formatTime(seconds) {

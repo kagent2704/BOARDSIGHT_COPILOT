@@ -4,13 +4,19 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>BoardSight</title>
-  <link rel="stylesheet" href="/styles.css?v=20260720-logo-refresh3">
+  <link rel="stylesheet" href="/styles.css?v=20260720-billing1">
 </head>
 <body data-theme="dark">
   <div class="app-shell">
     <aside class="brand-panel">
       <div class="brand-copy">
-        <img class="brand-mark" src="/assets/boardsight-mark.png?v=20260720-logo-refresh3" alt="BoardSight logo">
+        <img
+          class="brand-mark theme-brand-asset"
+          src="/assets/boardsight-mark-dark.png?v=20260720-theme-logos1"
+          data-light-src="/assets/boardsight-mark-light.png?v=20260720-theme-logos1"
+          data-dark-src="/assets/boardsight-mark-dark.png?v=20260720-theme-logos1"
+          alt="BoardSight logo"
+        >
         <div>
           <h1>BoardSight</h1>
           <p class="tagline">Modern. Intelligent. Focused.</p>
@@ -23,7 +29,13 @@
       <section id="loginView" class="auth-panel panel elevated landing-auth">
         <header class="landing-nav">
           <div class="landing-brand">
-            <img class="brand-wordmark brand-wordmark-nav" src="/assets/boardsight-wordmark.png?v=20260720-logo-refresh3" alt="BoardSight">
+            <img
+              class="brand-wordmark brand-wordmark-nav theme-brand-asset"
+              src="/assets/boardsight-wordmark-dark.png?v=20260720-theme-logos1"
+              data-light-src="/assets/boardsight-wordmark-light.png?v=20260720-theme-logos1"
+              data-dark-src="/assets/boardsight-wordmark-dark.png?v=20260720-theme-logos1"
+              alt="BoardSight"
+            >
           </div>
           <nav class="landing-links" aria-label="BoardSight">
             <a href="#product">Product</a>
@@ -341,7 +353,13 @@
         <div class="layout-grid">
           <nav class="sidebar panel">
             <div class="sidebar-brand">
-              <img class="brand-mark small" src="/assets/boardsight-mark.png" alt="BoardSight logo">
+              <img
+                class="brand-mark small theme-brand-asset"
+                src="/assets/boardsight-mark-dark.png?v=20260720-theme-logos1"
+                data-light-src="/assets/boardsight-mark-light.png?v=20260720-theme-logos1"
+                data-dark-src="/assets/boardsight-mark-dark.png?v=20260720-theme-logos1"
+                alt="BoardSight logo"
+              >
               <strong>BoardSight</strong>
             </div>
             <div class="nav-group">
@@ -354,9 +372,19 @@
             </div>
             <div class="nav-group">
               <div class="nav-label">Workspace</div>
-              <select id="workspaceSelector" class="workspace-chip" aria-label="Active workspace">
-                <option>Loading workspace...</option>
-              </select>
+              <div id="workspaceSwitcher" class="workspace-switcher">
+                <button id="workspaceSwitcherBtn" class="workspace-switcher-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
+                  <span class="workspace-switcher-mark">W</span>
+                  <span class="workspace-switcher-copy"><strong id="workspaceSwitcherName">Loading workspace...</strong><small id="workspaceSwitcherPlan">Current plan</small></span>
+                  <span class="workspace-switcher-chevron" aria-hidden="true"></span>
+                </button>
+                <div id="workspaceSwitcherMenu" class="workspace-switcher-menu hidden" role="listbox"></div>
+              </div>
+              <div class="sidebar-usage-card">
+                <div><span>Processing minutes</span><strong id="sidebarUsageValue">—</strong></div>
+                <div class="usage-meter"><span id="sidebarUsageBar"></span></div>
+              </div>
+              <button class="nav-item billing-nav-item" data-view="billing"><span>Plan &amp; Billing</span><span id="sidebarPlanBadge" class="mini-plan-badge">Plan</span></button>
               <button class="nav-item" data-view="admin">Settings</button>
             </div>
             <div class="user-chip">
@@ -715,6 +743,35 @@
             </article>
           </section>
 
+          <section id="billingView" class="content-view hidden">
+            <article class="panel billing-layout">
+              <div class="billing-hero">
+                <div>
+                  <span class="eyebrow">Plan &amp; Billing</span>
+                  <h3>Usage that stays predictable.</h3>
+                  <p class="muted">See the workspace allowance, compare plans, and request an upgrade without losing your current work.</p>
+                </div>
+                <span id="billingCurrentPlanBadge" class="current-plan-badge">Current plan</span>
+              </div>
+              <div class="billing-overview-grid">
+                <div class="billing-usage-card">
+                  <div class="billing-usage-heading"><div><span>Monthly processing allowance</span><strong id="billingRemainingMinutes">—</strong><small>minutes remaining</small></div><span id="billingUsagePercent" class="usage-percent">0%</span></div>
+                  <div class="usage-meter billing-meter"><span id="billingUsageBar"></span></div>
+                  <div class="billing-usage-foot"><span id="billingUsedMinutes">0 minutes used</span><span id="billingMinuteLimit">0 minute limit</span></div>
+                </div>
+                <div class="billing-stat-card"><span>Licensed seats</span><strong id="billingSeatUsage">—</strong><small>Viewers remain free</small></div>
+                <div class="billing-stat-card"><span>Overage</span><strong>₹0.50</strong><small>per processed minute</small></div>
+              </div>
+              <div class="billing-cycle-row">
+                <div><h4>Choose the right plan</h4><p class="muted">Annual billing includes roughly two months free.</p></div>
+                <div class="billing-cycle-toggle" role="group" aria-label="Billing cycle"><button class="active" type="button" data-billing-cycle="monthly">Monthly</button><button type="button" data-billing-cycle="annual">Annual</button></div>
+              </div>
+              <div id="pricingPlanGrid" class="pricing-plan-grid"><div class="empty-state">Loading plans...</div></div>
+              <div id="billingRequestStatus" class="upload-status billing-request-status"></div>
+              <p class="billing-fine-print">Upgrade requests are reviewed manually while BoardSight completes payment automation. No charge is taken when you click request.</p>
+            </article>
+          </section>
+
           <section id="adminView" class="content-view hidden">
             <article class="panel admin-layout">
               <div class="panel-title-row">
@@ -769,7 +826,7 @@
     </div>
   </div>
   <button id="floatingLiveLauncher" class="floating-live-launcher hidden" type="button">Open Live Copilot</button>
-  <script src="/app.js?v=20260720-logo-refresh1"></script>
+  <script src="/app.js?v=20260720-billing1"></script>
 </body>
 </html>
 
