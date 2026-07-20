@@ -310,7 +310,7 @@ function setAuthBusy(active, busyLabel = "Working...") {
   } else {
     guestLogin.textContent = guestLogin.dataset.defaultLabel || "Continue as Demo";
     if (guestHeroBtn) {
-      guestHeroBtn.innerHTML = `${guestHeroBtn.dataset.defaultLabel || "Explore Demo"} <span aria-hidden="true">→</span>`;
+      guestHeroBtn.textContent = guestHeroBtn.dataset.defaultLabel || "Explore Demo";
     }
     syncAuthMode();
   }
