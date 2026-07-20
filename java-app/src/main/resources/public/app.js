@@ -69,6 +69,7 @@ applyThemeBrandAssets();
 
 const loginView = document.getElementById("loginView");
 const appView = document.getElementById("appView");
+const landingNav = document.querySelector(".landing-nav");
 const loginForm = document.getElementById("loginForm");
 const themeToggle = document.getElementById("themeToggle");
 const landingThemeToggle = document.getElementById("landingThemeToggle");
@@ -190,6 +191,16 @@ const billingMinuteLimit = document.getElementById("billingMinuteLimit");
 const billingSeatUsage = document.getElementById("billingSeatUsage");
 const pricingPlanGrid = document.getElementById("pricingPlanGrid");
 const billingRequestStatus = document.getElementById("billingRequestStatus");
+
+function syncLandingNavState() {
+  if (!landingNav) {
+    return;
+  }
+  landingNav.classList.toggle("is-scrolled", window.scrollY > 12);
+}
+
+syncLandingNavState();
+window.addEventListener("scroll", syncLandingNavState, { passive: true });
 
 let liveRefreshHandle = null;
 let liveRecognition = null;
@@ -428,10 +439,15 @@ async function resendVerification(identifier) {
       return;
     }
     const sent = Boolean(payload.verification_sent);
+    const reason = String(payload?.email_delivery?.reason || "");
     setAuthFeedback(
       sent
         ? "Verification email sent. Check your inbox and spam folder."
-        : "The account exists, but the verification email could not be sent right now.",
+        : reason === "email_from_not_configured"
+          ? "Verification email is not fully configured on the server yet. The sender address is missing."
+          : reason === "email_api_key_not_configured"
+            ? "Verification email is not fully configured on the server yet. The Resend API key is missing."
+            : "The account exists, but the verification email could not be sent right now.",
       { success: sent }
     );
   }, "Sending email...");
@@ -641,12 +657,17 @@ async function registerUser() {
   }
 
   if (payload.status === "verification_pending") {
+    const reason = String(payload?.email_delivery?.reason || "");
     return {
       ok: true,
       requiresVerification: true,
       message: payload.verification_sent
         ? "Account created. Check your email and verify before signing in."
-        : "Account created, but we could not send the verification email yet. Use resend verification below."
+        : reason === "email_from_not_configured"
+          ? "Account created, but verification email is not fully configured on the server yet. The sender address is missing."
+          : reason === "email_api_key_not_configured"
+            ? "Account created, but verification email is not fully configured on the server yet. The Resend API key is missing."
+            : "Account created, but we could not send the verification email yet. Use resend verification below."
     };
   }
 

@@ -267,6 +267,24 @@ def _email_provider_is_configured() -> bool:
     )
 
 
+def _email_delivery_status() -> dict:
+    sender = bool(os.getenv("BOARDSIGHT_EMAIL_FROM", "").strip())
+    api_key = bool((os.getenv("BOARDSIGHT_RESEND_API_KEY") or os.getenv("RESEND_API_KEY") or "").strip())
+    configured = sender and api_key
+    if configured:
+        reason = ""
+    elif api_key and not sender:
+        reason = "email_from_not_configured"
+    elif sender and not api_key:
+        reason = "email_api_key_not_configured"
+    else:
+        reason = "email_provider_not_configured"
+    return {
+        "configured": configured,
+        "reason": reason,
+    }
+
+
 def _send_verification_email_safe(*, to_email: str, display_name: str, verification_url: str) -> None:
     try:
         send_verification_email(
@@ -632,7 +650,8 @@ async def register(request: Request, background_tasks: BackgroundTasks, payload:
         raise HTTPException(status_code=500, detail="Unable to create account verification state.")
     raw_token = issue_email_verification_token(AUTH_DB_PATH, int(user["user_id"]), email)
     verification_url = f"{_verification_base_url(request)}/api/v1/auth/verify-email?token={raw_token}"
-    if _email_provider_is_configured():
+    email_delivery = _email_delivery_status()
+    if email_delivery["configured"]:
         _queue_verification_email(
             to_email=email,
             display_name=display_name,
@@ -644,11 +663,11 @@ async def register(request: Request, background_tasks: BackgroundTasks, payload:
         "email": email,
         "display_name": display_name,
         "role": role,
-        "verification_sent": _email_provider_is_configured(),
+        "verification_sent": email_delivery["configured"],
         "email_delivery": {
-            "sent": _email_provider_is_configured(),
-            "queued": _email_provider_is_configured(),
-            "reason": "" if _email_provider_is_configured() else "email_provider_not_configured",
+            "sent": email_delivery["configured"],
+            "queued": email_delivery["configured"],
+            "reason": email_delivery["reason"],
         },
     }
 
@@ -694,7 +713,8 @@ async def resend_verification(request: Request, background_tasks: BackgroundTask
         return {"status": "already_verified", "email": user["email"]}
     raw_token = issue_email_verification_token(AUTH_DB_PATH, int(user["id"]), str(user["email"]))
     verification_url = f"{_verification_base_url(request)}/api/v1/auth/verify-email?token={raw_token}"
-    if _email_provider_is_configured():
+    email_delivery = _email_delivery_status()
+    if email_delivery["configured"]:
         _queue_verification_email(
             to_email=str(user["email"]),
             display_name=str(user.get("display_name") or user.get("username") or "there"),
@@ -703,11 +723,11 @@ async def resend_verification(request: Request, background_tasks: BackgroundTask
     return {
         "status": "verification_resent",
         "email": user["email"],
-        "verification_sent": _email_provider_is_configured(),
+        "verification_sent": email_delivery["configured"],
         "email_delivery": {
-            "sent": _email_provider_is_configured(),
-            "queued": _email_provider_is_configured(),
-            "reason": "" if _email_provider_is_configured() else "email_provider_not_configured",
+            "sent": email_delivery["configured"],
+            "queued": email_delivery["configured"],
+            "reason": email_delivery["reason"],
         },
     }
 
@@ -1037,7 +1057,8 @@ def privacy_settings() -> dict:
         "report_retention_days": _retention_days("BOARDSIGHT_REPORT_RETENTION_DAYS", 90),
         "session_ttl_seconds": session_ttl_seconds(),
         "email_verification_required": True,
-        "email_provider_configured": bool(os.getenv("BOARDSIGHT_RESEND_API_KEY") or os.getenv("RESEND_API_KEY")),
+        "email_provider_configured": _email_delivery_status()["configured"],
+        "email_delivery_reason": _email_delivery_status()["reason"],
         "data_encryption_enabled": data_encryption_enabled(),
         "data_encryption_key_fingerprint": data_encryption_key_fingerprint(),
         "operator_blindness_mode": "application-layer-encryption",
