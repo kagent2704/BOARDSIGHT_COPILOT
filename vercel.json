@@ -14,6 +14,10 @@
       "destination": "/java-app/src/main/resources/public/app.js"
     },
     {
+      "source": "/assets/(.*)",
+      "destination": "/java-app/src/main/resources/public/assets/$1"
+    },
+    {
       "source": "/",
       "destination": "/java-app/src/main/resources/public/index.html"
     },
