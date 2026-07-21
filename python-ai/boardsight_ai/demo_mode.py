@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from boardsight_ai.auth import create_session_for_user, create_user, get_user_by_username, init_auth_storage
+from boardsight_ai.auth import create_session_for_user, create_user, init_auth_storage
 from boardsight_ai.data_protection import encrypt_text
 from boardsight_ai.database import execute, fetchall, fetchone
 from boardsight_ai.models import PipelineResult, pipeline_result_from_dict
@@ -50,9 +50,16 @@ def demo_credentials() -> dict[str, str]:
     }
 
 
-def ensure_demo_workspace(auth_db_path: Path, meeting_db_path: Path, *, reset: bool = False) -> dict[str, Any]:
-    init_auth_storage(auth_db_path)
-    init_storage(meeting_db_path)
+def ensure_demo_workspace(
+    auth_db_path: Path,
+    meeting_db_path: Path,
+    *,
+    reset: bool = False,
+    initialize: bool = True,
+) -> dict[str, Any]:
+    if initialize:
+        init_auth_storage(auth_db_path)
+        init_storage(meeting_db_path)
     demo_user = _upsert_demo_user(auth_db_path)
     if reset:
         _reset_demo_workspace(meeting_db_path, int(demo_user["user_id"]))
@@ -63,10 +70,21 @@ def ensure_demo_workspace(auth_db_path: Path, meeting_db_path: Path, *, reset: b
     return _seed_demo_workspace(meeting_db_path, demo_user)
 
 
-def create_demo_session(auth_db_path: Path, meeting_db_path: Path, *, reset: bool = False) -> dict[str, Any]:
-    demo_manifest = ensure_demo_workspace(auth_db_path, meeting_db_path, reset=reset)
+def create_demo_session(
+    auth_db_path: Path,
+    meeting_db_path: Path,
+    *,
+    reset: bool = False,
+    initialize: bool = True,
+) -> dict[str, Any]:
+    demo_manifest = ensure_demo_workspace(
+        auth_db_path,
+        meeting_db_path,
+        reset=reset,
+        initialize=initialize,
+    )
     creds = demo_credentials()
-    demo_user = get_user_by_username(auth_db_path, creds["username"])
+    demo_user = _get_demo_user(auth_db_path, creds["username"])
     if demo_user is None:
         raise RuntimeError("Unable to create demo session.")
     # This public endpoint authenticates only the dedicated server-provisioned demo
@@ -78,7 +96,7 @@ def create_demo_session(auth_db_path: Path, meeting_db_path: Path, *, reset: boo
 
 def _upsert_demo_user(auth_db_path: Path) -> dict[str, Any]:
     creds = demo_credentials()
-    existing = get_user_by_username(auth_db_path, creds["username"])
+    existing = _get_demo_user(auth_db_path, creds["username"])
     if existing is None:
         create_user(
             auth_db_path,
@@ -106,10 +124,32 @@ def _upsert_demo_user(auth_db_path: Path) -> dict[str, Any]:
             "email_verified": True,
         },
     )
-    user = get_user_by_username(auth_db_path, creds["username"])
+    user = _get_demo_user(auth_db_path, creds["username"])
     if user is None:
         raise RuntimeError("Unable to provision demo user.")
     return user
+
+
+def _get_demo_user(auth_db_path: Path, username: str) -> dict[str, Any] | None:
+    row = fetchone(
+        auth_db_path,
+        """
+        SELECT id, username, email, display_name, role, email_verified
+        FROM users
+        WHERE LOWER(username) = LOWER(:username)
+        """,
+        {"username": username},
+    )
+    if row is None:
+        return None
+    return {
+        "user_id": int(row["id"]),
+        "username": row["username"],
+        "email": row["email"],
+        "display_name": row["display_name"],
+        "role": row["role"],
+        "email_verified": bool(row.get("email_verified")),
+    }
 
 
 def _existing_demo_workspace(meeting_db_path: Path, user_id: int) -> dict[str, Any] | None:

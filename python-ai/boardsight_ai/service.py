@@ -629,7 +629,7 @@ async def login(request: Request, payload: dict | None = None) -> dict:
 @app.post("/api/v1/demo/session")
 def demo_session() -> dict:
     try:
-        return create_demo_session(AUTH_DB_PATH, MEETING_DB_PATH)
+        return create_demo_session(AUTH_DB_PATH, MEETING_DB_PATH, initialize=False)
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Unable to prepare the demo workspace right now.") from exc
 
@@ -637,7 +637,7 @@ def demo_session() -> dict:
 @app.post("/api/v1/demo/reset")
 def reset_demo_session() -> dict:
     try:
-        manifest = ensure_demo_workspace(AUTH_DB_PATH, MEETING_DB_PATH, reset=True)
+        manifest = ensure_demo_workspace(AUTH_DB_PATH, MEETING_DB_PATH, reset=True, initialize=False)
         return {"status": "reset", "demo": manifest}
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Unable to reset the demo workspace right now.") from exc
