@@ -8,11 +8,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from boardsight_ai.auth import authenticate_user, create_user, get_user_by_username, hash_password, init_auth_storage
+from boardsight_ai.auth import create_session_for_user, create_user, get_user_by_username, init_auth_storage
 from boardsight_ai.data_protection import encrypt_text
 from boardsight_ai.database import execute, fetchall, fetchone
 from boardsight_ai.models import PipelineResult, pipeline_result_from_dict
-from boardsight_ai.reporting import write_structured_reports
 from boardsight_ai.storage import (
     append_live_session_event,
     append_live_visual_event,
@@ -67,9 +66,12 @@ def ensure_demo_workspace(auth_db_path: Path, meeting_db_path: Path, *, reset: b
 def create_demo_session(auth_db_path: Path, meeting_db_path: Path, *, reset: bool = False) -> dict[str, Any]:
     demo_manifest = ensure_demo_workspace(auth_db_path, meeting_db_path, reset=reset)
     creds = demo_credentials()
-    session = authenticate_user(auth_db_path, creds["username"], creds["password"])
-    if session is None:
+    demo_user = get_user_by_username(auth_db_path, creds["username"])
+    if demo_user is None:
         raise RuntimeError("Unable to create demo session.")
+    # This public endpoint authenticates only the dedicated server-provisioned demo
+    # identity, so an expensive password hash/verify cycle adds no security value.
+    session = create_session_for_user(auth_db_path, demo_user)
     session["demo"] = demo_manifest
     return session
 
@@ -93,7 +95,6 @@ def _upsert_demo_user(auth_db_path: Path) -> dict[str, Any]:
         UPDATE users
         SET email = :email,
             display_name = :display_name,
-            password_hash = :password_hash,
             role = 'admin',
             email_verified = :email_verified
         WHERE LOWER(username) = LOWER(:username)
@@ -102,7 +103,6 @@ def _upsert_demo_user(auth_db_path: Path) -> dict[str, Any]:
             "username": creds["username"],
             "email": creds["email"],
             "display_name": creds["display_name"],
-            "password_hash": hash_password(creds["password"]),
             "email_verified": True,
         },
     )
@@ -184,8 +184,8 @@ def _seed_demo_workspace(meeting_db_path: Path, demo_user: dict[str, Any]) -> di
         performance_report_path = output_dir / "performance_report.json"
         if performance_report and not performance_report_path.exists():
             performance_report_path.write_text(json.dumps(performance_report, indent=2), encoding="utf-8")
-        if not any((output_dir / name).exists() for name in ("structured_report.pdf", "structured_report.docx", "structured_report.xlsx")):
-            write_structured_reports(result, output_dir)
+        # Export files are generated on demand. Building every format here makes
+        # the first Explore Demo click wait on PDF/DOCX/XLSX rendering.
         meeting_id = save_meeting_result(
             meeting_db_path,
             result,

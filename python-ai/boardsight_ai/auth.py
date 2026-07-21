@@ -425,6 +425,20 @@ def authenticate_user(database_path: Path, identifier: str, password: str) -> di
     return _create_session(database_path, user)
 
 
+def create_session_for_user(
+    database_path: Path,
+    user: dict[str, Any],
+    ttl_seconds: int | None = None,
+) -> dict[str, Any]:
+    """Create a session for an already trusted, server-provisioned user."""
+    required = {"user_id", "username", "email", "display_name", "role", "email_verified"}
+    if not required.issubset(user):
+        raise ValueError("A complete trusted user payload is required.")
+    if not bool(user.get("email_verified")):
+        raise ValueError("Sessions cannot be created for an unverified user.")
+    return _create_session(database_path, user, ttl_seconds=ttl_seconds)
+
+
 def get_session_user(database_path: Path, token: str) -> dict[str, Any] | None:
     init_auth_storage(database_path)
     row = fetchone(
