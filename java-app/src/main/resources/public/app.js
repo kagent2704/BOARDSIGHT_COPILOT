@@ -1178,8 +1178,8 @@ async function startPlanCheckout(planCode, button) {
     button.disabled = true;
     button.textContent = "Preparing checkout...";
   }
-  if (billingRequestStatus) billingRequestStatus.textContent = "Creating your secure Razorpay subscription...";
-  const response = await apiFetch("/api/v1/subscriptions/create", {
+  if (billingRequestStatus) billingRequestStatus.textContent = "Creating your secure Razorpay checkout...";
+  const response = await apiFetch("/api/v1/payments/create-order", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ organization_id: current.id, plan_code: planCode, billing_cycle: state.billingCycle })
@@ -1200,7 +1200,9 @@ async function startPlanCheckout(planCode, button) {
     name: "BoardSight",
     description: `${plan?.name || "BoardSight plan"} · ${state.billingCycle}`,
     image: `${window.location.origin}/assets/boardsight-mark.png`,
-    subscription_id: payload.subscription_id,
+    order_id: payload.order_id,
+    amount: payload.amount,
+    currency: payload.currency || "INR",
     prefill: {
       name: state.currentUser?.displayName || "",
       email: state.currentUser?.email || ""
@@ -1219,7 +1221,7 @@ async function startPlanCheckout(planCode, button) {
     },
     handler: async (payment) => {
       if (billingRequestStatus) billingRequestStatus.textContent = "Verifying payment securely...";
-      const verifyResponse = await apiFetch("/api/v1/subscriptions/verify", {
+      const verifyResponse = await apiFetch("/api/v1/payments/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ organization_id: current.id, ...payment })
