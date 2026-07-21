@@ -851,7 +851,7 @@
               </div>
               <div id="pricingPlanGrid" class="pricing-plan-grid"><div class="empty-state">Loading plans...</div></div>
               <div id="billingRequestStatus" class="upload-status billing-request-status"></div>
-              <p class="billing-fine-print">Upgrade requests are reviewed manually while BoardSight completes payment automation. No charge is taken when you click request.</p>
+              <p class="billing-fine-print">Subscriptions renew automatically through Razorpay until cancelled. BoardSight never receives or stores your card or UPI credentials.</p>
             </article>
           </section>
 
@@ -935,7 +935,8 @@
     </div>
   </div>
   <button id="floatingLiveLauncher" class="floating-live-launcher hidden" type="button">Open Live Copilot</button>
-  <script src="/app.js?v=20260721-workspace-integrations1"></script>
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+  <script src="/app.js?v=20260721-razorpay-subscriptions1"></script>
 </body>
 </html>
 

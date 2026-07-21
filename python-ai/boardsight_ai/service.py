@@ -58,6 +58,16 @@ from boardsight_ai.agent_storage import (
 from boardsight_ai.config import _load_local_env, default_config
 from boardsight_ai.data_protection import data_encryption_enabled, data_encryption_key_fingerprint
 from boardsight_ai.emailer import send_verification_email
+from boardsight_ai.payments import (
+    PaymentConfigurationError,
+    PaymentGatewayError,
+    create_checkout_order,
+    create_recurring_subscription,
+    init_payment_storage,
+    process_subscription_webhook,
+    verify_checkout_payment,
+    verify_subscription_checkout,
+)
 from boardsight_ai.gitlab_execution import build_gitlab_execution_plan, normalize_gitlab_plan_source, sync_plan_to_gitlab
 from boardsight_ai.gitlab_storage import init_gitlab_storage, protect_gitlab_storage, save_gitlab_sync
 from boardsight_ai.task_delivery import (
@@ -124,6 +134,7 @@ _load_local_env(PROJECT_ROOT)
 init_auth_storage(AUTH_DB_PATH)
 init_storage(MEETING_DB_PATH)
 init_workspace_storage(MEETING_DB_PATH)
+init_payment_storage(MEETING_DB_PATH)
 init_agent_storage(MEETING_DB_PATH)
 init_gitlab_storage(MEETING_DB_PATH)
 
@@ -957,6 +968,164 @@ def workspaces(request: Request) -> dict:
 def pricing_plans(request: Request) -> dict:
     _require_session_user(request)
     return {"currency": "INR", "items": plan_catalog()}
+
+
+@app.post("/api/v1/payments/create-order")
+async def create_payment_order(request: Request, payload: dict | None = None) -> dict:
+    user = _require_session_user(request)
+    request_payload = await _collect_request_payload(request, payload)
+    try:
+        organization_id = int(request_payload.get("organization_id") or 0)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="A valid workspace is required.") from exc
+    workspace = get_workspace_for_user(MEETING_DB_PATH, organization_id, int(user["user_id"]))
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace was not found for this account.")
+    try:
+        assert_workspace_access(workspace, require_admin=True)
+        if workspace.get("is_sponsored") or workspace.get("user_sponsorship_id") or workspace.get("billing_mode") == "internal_sponsored":
+            raise PermissionError("Sponsored workspaces do not need to purchase a plan.")
+        order = create_checkout_order(
+            MEETING_DB_PATH,
+            organization_id=organization_id,
+            user_id=int(user["user_id"]),
+            plan_code=str(request_payload.get("plan_code") or ""),
+            billing_cycle=str(request_payload.get("billing_cycle") or "monthly"),
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except PaymentConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except PaymentGatewayError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return order
+
+
+@app.post("/api/v1/payments/verify")
+async def verify_payment(request: Request, payload: dict | None = None) -> dict:
+    user = _require_session_user(request)
+    request_payload = await _collect_request_payload(request, payload)
+    required_fields = ("organization_id", "razorpay_payment_id", "razorpay_order_id", "razorpay_signature")
+    if any(not request_payload.get(field) for field in required_fields):
+        raise HTTPException(status_code=400, detail="Missing required Razorpay payment fields.")
+    try:
+        organization_id = int(request_payload["organization_id"])
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="A valid workspace is required.") from exc
+    workspace = get_workspace_for_user(MEETING_DB_PATH, organization_id, int(user["user_id"]))
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace was not found for this account.")
+    try:
+        assert_workspace_access(workspace, require_admin=True)
+        payment = verify_checkout_payment(
+            MEETING_DB_PATH,
+            organization_id=organization_id,
+            razorpay_order_id=str(request_payload["razorpay_order_id"]),
+            razorpay_payment_id=str(request_payload["razorpay_payment_id"]),
+            razorpay_signature=str(request_payload["razorpay_signature"]),
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except PaymentConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {
+        "status": "success",
+        "payment_id": payment.get("provider_payment_id"),
+        "plan_code": payment.get("plan_code"),
+        "billing_cycle": payment.get("billing_cycle"),
+    }
+
+
+@app.post("/api/v1/subscriptions/create")
+async def create_subscription(request: Request, payload: dict | None = None) -> dict:
+    user = _require_session_user(request)
+    request_payload = await _collect_request_payload(request, payload)
+    try:
+        organization_id = int(request_payload.get("organization_id") or 0)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="A valid workspace is required.") from exc
+    workspace = get_workspace_for_user(MEETING_DB_PATH, organization_id, int(user["user_id"]))
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace was not found for this account.")
+    try:
+        assert_workspace_access(workspace, require_admin=True)
+        if workspace.get("is_sponsored") or workspace.get("user_sponsorship_id") or workspace.get("billing_mode") == "internal_sponsored":
+            raise PermissionError("Sponsored workspaces do not need to purchase a subscription.")
+        subscription = create_recurring_subscription(
+            MEETING_DB_PATH,
+            organization_id=organization_id,
+            user_id=int(user["user_id"]),
+            plan_code=str(request_payload.get("plan_code") or ""),
+            billing_cycle=str(request_payload.get("billing_cycle") or "monthly"),
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except PaymentConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except PaymentGatewayError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return subscription
+
+
+@app.post("/api/v1/subscriptions/verify")
+async def verify_subscription(request: Request, payload: dict | None = None) -> dict:
+    user = _require_session_user(request)
+    request_payload = await _collect_request_payload(request, payload)
+    required_fields = ("organization_id", "razorpay_payment_id", "razorpay_subscription_id", "razorpay_signature")
+    if any(not request_payload.get(field) for field in required_fields):
+        raise HTTPException(status_code=400, detail="Missing required Razorpay subscription fields.")
+    try:
+        organization_id = int(request_payload["organization_id"])
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="A valid workspace is required.") from exc
+    workspace = get_workspace_for_user(MEETING_DB_PATH, organization_id, int(user["user_id"]))
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace was not found for this account.")
+    try:
+        assert_workspace_access(workspace, require_admin=True)
+        subscription = verify_subscription_checkout(
+            MEETING_DB_PATH,
+            organization_id=organization_id,
+            razorpay_subscription_id=str(request_payload["razorpay_subscription_id"]),
+            razorpay_payment_id=str(request_payload["razorpay_payment_id"]),
+            razorpay_signature=str(request_payload["razorpay_signature"]),
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except PaymentConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {
+        "status": "success",
+        "subscription_id": subscription.get("provider_subscription_id"),
+        "plan_code": subscription.get("plan_code"),
+        "billing_cycle": subscription.get("billing_cycle"),
+    }
+
+
+@app.post("/api/v1/webhooks/razorpay")
+async def razorpay_webhook(request: Request) -> dict:
+    raw_body = await request.body()
+    signature = request.headers.get("X-Razorpay-Signature", "")
+    event_id = request.headers.get("X-Razorpay-Event-Id", "")
+    try:
+        return process_subscription_webhook(
+            MEETING_DB_PATH,
+            raw_body=raw_body,
+            signature=signature,
+            event_id=event_id,
+        )
+    except PaymentConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/workspaces")

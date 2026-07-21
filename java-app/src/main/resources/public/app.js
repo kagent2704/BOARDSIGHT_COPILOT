@@ -306,7 +306,7 @@ document.querySelectorAll("[data-billing-cycle]").forEach((button) => {
 
 pricingPlanGrid?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-request-plan]");
-  if (button) requestPlanChange(button.dataset.requestPlan);
+  if (button) startPlanCheckout(button.dataset.requestPlan, button);
 });
 
 workspaceCreateBtn?.addEventListener("click", createBoardSightWorkspace);
@@ -1149,7 +1149,7 @@ function renderBillingView() {
     const price = annual ? plan.annual_price_inr : plan.monthly_price_inr;
     const priceLabel = price == null ? "Let's talk" : `₹${Number(price).toLocaleString("en-IN")}`;
     const suffix = price == null ? "" : annual ? "/ year" : "/ month";
-    const actionLabel = isSponsored ? "Included with sponsored access" : isCurrent ? "Current plan" : plan.plan_code === "custom" ? "Request custom plan" : `Request ${plan.name}`;
+    const actionLabel = isSponsored ? "Included with sponsored access" : isCurrent ? "Current plan" : plan.plan_code === "custom" ? "Contact BoardSight" : `Pay ${priceLabel}`;
     const memberLabel = plan.plan_code === "custom" ? "Contracted licensed members" : `<strong>${Number(plan.licensed_members).toLocaleString("en-IN")}</strong> licensed ${Number(plan.licensed_members) === 1 ? "member" : "members"}`;
     const minuteLabel = plan.plan_code === "custom" ? "Contracted pooled usage" : `<strong>${Number(plan.monthly_minutes).toLocaleString("en-IN")}</strong> pooled minutes/month`;
     return `<article class="pricing-card${featured ? " featured" : ""}${isCurrent ? " current" : ""}">
@@ -1161,22 +1161,92 @@ function renderBillingView() {
   }).join("");
 }
 
-async function requestPlanChange(planCode) {
+async function startPlanCheckout(planCode, button) {
   const current = state.workspaces.find((workspace) => String(workspace.id) === String(state.currentWorkspaceId));
   if (!current || !planCode) return;
-  if (billingRequestStatus) billingRequestStatus.textContent = "Submitting upgrade request...";
-  const response = await apiFetch(`/api/v1/workspaces/${encodeURIComponent(current.id)}/subscription-change-requests`, {
+  if (planCode === "custom") {
+    if (billingRequestStatus) billingRequestStatus.textContent = "Contact support@boardsight.in for a custom plan.";
+    return;
+  }
+  if (typeof window.Razorpay !== "function") {
+    if (billingRequestStatus) billingRequestStatus.textContent = "The secure checkout could not load. Check your connection and try again.";
+    return;
+  }
+  const originalLabel = button?.textContent || "Pay now";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Preparing checkout...";
+  }
+  if (billingRequestStatus) billingRequestStatus.textContent = "Creating your secure Razorpay subscription...";
+  const response = await apiFetch("/api/v1/subscriptions/create", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ plan_code: planCode, billing_cycle: state.billingCycle })
+    body: JSON.stringify({ organization_id: current.id, plan_code: planCode, billing_cycle: state.billingCycle })
   });
   const payload = await response.json();
   if (!response.ok) {
-    if (billingRequestStatus) billingRequestStatus.textContent = normalizeMessage(payload.detail || "Unable to submit the plan request.");
+    if (billingRequestStatus) billingRequestStatus.textContent = normalizeMessage(payload.detail || "Unable to start checkout.");
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalLabel;
+    }
     return;
   }
   const plan = state.pricingPlans.find((item) => item.plan_code === planCode);
-  if (billingRequestStatus) billingRequestStatus.textContent = `${plan?.name || "Plan"} request submitted. No payment has been taken; BoardSight will confirm activation manually.`;
+  let checkoutCompleted = false;
+  const checkout = new window.Razorpay({
+    key: payload.key_id,
+    name: "BoardSight",
+    description: `${plan?.name || "BoardSight plan"} · ${state.billingCycle}`,
+    image: `${window.location.origin}/assets/boardsight-mark.png`,
+    subscription_id: payload.subscription_id,
+    prefill: {
+      name: state.currentUser?.displayName || "",
+      email: state.currentUser?.email || ""
+    },
+    notes: { workspace_id: String(current.id), plan_code: planCode },
+    theme: { color: "#6366f1" },
+    modal: {
+      confirm_close: true,
+      ondismiss: () => {
+        if (!checkoutCompleted && billingRequestStatus) billingRequestStatus.textContent = "Checkout cancelled. No payment was taken.";
+        if (button) {
+          button.disabled = false;
+          button.textContent = originalLabel;
+        }
+      }
+    },
+    handler: async (payment) => {
+      if (billingRequestStatus) billingRequestStatus.textContent = "Verifying payment securely...";
+      const verifyResponse = await apiFetch("/api/v1/subscriptions/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ organization_id: current.id, ...payment })
+      });
+      const verification = await verifyResponse.json();
+      if (!verifyResponse.ok) {
+        if (billingRequestStatus) billingRequestStatus.textContent = normalizeMessage(verification.detail || "Payment could not be verified. Please contact support.");
+        if (button) {
+          button.disabled = false;
+          button.textContent = originalLabel;
+        }
+        return;
+      }
+      checkoutCompleted = true;
+      if (billingRequestStatus) billingRequestStatus.textContent = `${plan?.name || "Plan"} activated successfully.`;
+      await loadWorkspaces();
+      await loadWorkspaceUsage();
+    }
+  });
+  checkout.on("payment.failed", (failure) => {
+    const message = failure?.error?.description || "Payment failed. Try again or use a different payment method.";
+    if (billingRequestStatus) billingRequestStatus.textContent = message;
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalLabel;
+    }
+  });
+  checkout.open();
 }
 
 function renderWorkspaceMembers(members) {
