@@ -10,3 +10,4 @@ google-genai>=2.3,<3.0
 argon2-cffi>=23.1,<24.0
 cryptography>=43.0,<45.0
 razorpay>=1.4,<2.0
+setuptools>=75,<81
