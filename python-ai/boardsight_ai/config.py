@@ -51,6 +51,13 @@ class AppConfig:
     gitlab_base_url: str | None = None
     gitlab_project_id: str | None = None
     gitlab_private_token: str | None = None
+    notion_database_id: str | None = None
+    notion_api_token: str | None = None
+    trello_list_id: str | None = None
+    trello_api_key: str | None = None
+    trello_api_token: str | None = None
+    microsoft_todo_list_id: str | None = None
+    microsoft_graph_access_token: str | None = None
     agent_api_key: str | None = None
     database_url: str | None = None
     llm_provider: str = "gemini"
@@ -94,6 +101,13 @@ def default_config(project_root: Path | None = None, output_root: Path | None = 
         gitlab_base_url=os.getenv("BOARDSIGHT_GITLAB_BASE_URL"),
         gitlab_project_id=os.getenv("BOARDSIGHT_GITLAB_PROJECT_ID"),
         gitlab_private_token=os.getenv("BOARDSIGHT_GITLAB_PRIVATE_TOKEN"),
+        notion_database_id=os.getenv("BOARDSIGHT_NOTION_DATABASE_ID"),
+        notion_api_token=os.getenv("BOARDSIGHT_NOTION_API_TOKEN"),
+        trello_list_id=os.getenv("BOARDSIGHT_TRELLO_LIST_ID"),
+        trello_api_key=os.getenv("BOARDSIGHT_TRELLO_API_KEY"),
+        trello_api_token=os.getenv("BOARDSIGHT_TRELLO_API_TOKEN"),
+        microsoft_todo_list_id=os.getenv("BOARDSIGHT_MICROSOFT_TODO_LIST_ID"),
+        microsoft_graph_access_token=os.getenv("BOARDSIGHT_MICROSOFT_GRAPH_ACCESS_TOKEN"),
         agent_api_key=os.getenv("BOARDSIGHT_AGENT_API_KEY"),
         database_url=os.getenv("BOARDSIGHT_DATABASE_URL"),
         llm_provider=os.getenv("BOARDSIGHT_LLM_PROVIDER", "gemini"),

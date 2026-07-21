@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>BoardSight</title>
-  <link rel="stylesheet" href="/styles.css?v=20260720-landing-refresh2">
+  <link rel="stylesheet" href="/styles.css?v=20260721-assignment-providers1">
 </head>
 <body data-theme="dark">
   <div class="app-shell">
@@ -584,28 +584,40 @@
                   </section>
                 </div>
               </div>
-              <div class="panel nested property-card">
-                <h4>GitLab Assignment</h4>
-                <p class="muted">Convert this meeting into assignable GitLab work when you are ready to operationalize it.</p>
+              <div class="panel nested property-card assignment-delivery-card">
+                <h4>Assignment Delivery</h4>
+                <p class="muted">Turn this meeting into traceable work in GitLab, Notion, Trello, or Microsoft To Do.</p>
+                <p class="muted">Leave connection fields blank to use the provider connected in Workspace Settings.</p>
                 <div class="analysis-range-grid">
-                  <label>GitLab Base URL
-                    <input type="text" id="meetingGitlabBaseUrlInput" placeholder="https://gitlab.com">
+                  <label>Send assignments to
+                    <select id="meetingAssignmentProviderInput">
+                      <option value="gitlab">GitLab</option>
+                      <option value="notion">Notion</option>
+                      <option value="trello">Trello</option>
+                      <option value="microsoft-todo">Microsoft To Do</option>
+                    </select>
                   </label>
-                  <label>Project ID or Path
-                    <input type="text" id="meetingGitlabProjectIdInput" placeholder="group/project or 123456">
+                  <label><span id="meetingAssignmentTargetLabel">Project ID or Path</span>
+                    <input type="text" id="meetingAssignmentTargetInput" placeholder="group/project or 123456">
                   </label>
                 </div>
-                <label>Private Token
-                  <input type="password" id="meetingGitlabPrivateTokenInput" placeholder="Optional if configured on the backend">
+                <label id="meetingAssignmentBaseUrlField">GitLab Base URL
+                  <input type="text" id="meetingAssignmentBaseUrlInput" placeholder="https://gitlab.com">
+                </label>
+                <label id="meetingAssignmentApiKeyField" class="hidden">Trello API Key
+                  <input type="password" id="meetingAssignmentApiKeyInput" placeholder="Optional if configured on the backend">
+                </label>
+                <label><span id="meetingAssignmentTokenLabel">Private Token</span>
+                  <input type="password" id="meetingAssignmentAccessTokenInput" placeholder="Optional if configured on the backend">
                 </label>
                 <label>Assignee Map JSON
-                  <textarea id="meetingGitlabAssigneeMapInput" rows="5" placeholder='{"kash": 123, "akanksha": 456}'></textarea>
+                  <textarea id="meetingAssignmentAssigneeMapInput" rows="4" placeholder='{"kash": 123, "akanksha": 456}'></textarea>
                 </label>
                 <div class="button-row">
                   <button id="meetingGitlabPreviewBtn" class="ghost-btn">Preview Plan</button>
-                  <button id="meetingGitlabSyncBtn" class="primary-btn">Assign In GitLab</button>
+                  <button id="meetingGitlabSyncBtn" class="primary-btn">Send Assignments</button>
                 </div>
-                <div id="meetingGitlabStatus" class="upload-status">Open an imported meeting, then preview the GitLab plan before creating issues.</div>
+                <div id="meetingGitlabStatus" class="upload-status">Open an imported meeting, choose a destination, and preview the plan.</div>
                 <div id="meetingGitlabResult" class="trace-card">
                   <div class="empty-state">Recorded-meeting preview results will appear here.</div>
                 </div>
@@ -772,30 +784,42 @@
                   </div>
                 </div>
 
-                <div class="panel nested property-card">
-                  <h4>GitLab Assignment</h4>
-                  <p class="muted">Turn live-session decisions, action items, and blockers into a GitLab issue plan, then push it into your project when it looks right.</p>
+                <div class="panel nested property-card assignment-delivery-card">
+                  <h4>Assignment Delivery</h4>
+                  <p class="muted">Send live-session decisions, action items, and blockers to GitLab, Notion, Trello, or Microsoft To Do.</p>
+                  <p class="muted">Leave connection fields blank to use the provider connected in Workspace Settings.</p>
                   <div class="analysis-range-grid">
-                    <label>GitLab Base URL
-                      <input type="text" id="gitlabBaseUrlInput" placeholder="https://gitlab.com">
+                    <label>Send assignments to
+                      <select id="assignmentProviderInput">
+                        <option value="gitlab">GitLab</option>
+                        <option value="notion">Notion</option>
+                        <option value="trello">Trello</option>
+                        <option value="microsoft-todo">Microsoft To Do</option>
+                      </select>
                     </label>
-                    <label>Project ID or Path
-                      <input type="text" id="gitlabProjectIdInput" placeholder="group/project or 123456">
+                    <label><span id="assignmentTargetLabel">Project ID or Path</span>
+                      <input type="text" id="assignmentTargetInput" placeholder="group/project or 123456">
                     </label>
                   </div>
-                  <label>Private Token
-                    <input type="password" id="gitlabPrivateTokenInput" placeholder="Optional if configured on the backend">
+                  <label id="assignmentBaseUrlField">GitLab Base URL
+                    <input type="text" id="assignmentBaseUrlInput" placeholder="https://gitlab.com">
+                  </label>
+                  <label id="assignmentApiKeyField" class="hidden">Trello API Key
+                    <input type="password" id="assignmentApiKeyInput" placeholder="Optional if configured on the backend">
+                  </label>
+                  <label><span id="assignmentTokenLabel">Private Token</span>
+                    <input type="password" id="assignmentAccessTokenInput" placeholder="Optional if configured on the backend">
                   </label>
                   <label>Assignee Map JSON
-                    <textarea id="gitlabAssigneeMapInput" rows="5" placeholder='{"kash": 123, "akanksha": 456}'></textarea>
+                    <textarea id="assignmentAssigneeMapInput" rows="4" placeholder='{"kash": 123, "akanksha": 456}'></textarea>
                   </label>
                   <div class="button-row">
                     <button id="gitlabPreviewBtn" class="ghost-btn">Preview Plan</button>
-                    <button id="gitlabSyncBtn" class="primary-btn">Assign In GitLab</button>
+                    <button id="gitlabSyncBtn" class="primary-btn">Send Assignments</button>
                   </div>
-                  <div id="gitlabStatus" class="upload-status">Preview the live-session plan before creating GitLab issues.</div>
+                  <div id="gitlabStatus" class="upload-status">Choose a destination and preview the live-session plan before creating tasks.</div>
                   <div id="gitlabResult" class="trace-card">
-                    <div class="empty-state">Previewed issues, blockers, and links will appear here.</div>
+                    <div class="empty-state">Previewed tasks, blockers, and links will appear here.</div>
                   </div>
                 </div>
               </div>
@@ -857,6 +881,32 @@
                   <div id="workspaceInviteResult" class="upload-status"></div>
                   <div id="workspaceMemberList" class="meeting-list"><div class="empty-state">No members loaded.</div></div>
                 </div>
+                <div class="panel nested integration-settings-panel">
+                  <h4>Assignment Integrations</h4>
+                  <p class="muted">Connect a workspace destination once, then send assignments from recorded or live meetings without re-entering credentials.</p>
+                  <label>Provider
+                    <select id="integrationProviderSelect">
+                      <option value="gitlab">GitLab</option>
+                      <option value="notion">Notion</option>
+                      <option value="trello">Trello</option>
+                    </select>
+                  </label>
+                  <div id="integrationBaseUrlField">
+                    <label>GitLab Base URL<input id="integrationBaseUrlInput" type="url" placeholder="https://gitlab.com"></label>
+                  </div>
+                  <label><span id="integrationTargetLabel">Project ID or Path</span><input id="integrationTargetInput" type="text" placeholder="group/project or 123456"></label>
+                  <div id="integrationApiKeyField" class="hidden">
+                    <label>Trello API Key<input id="integrationApiKeyInput" type="password" autocomplete="off" placeholder="Trello API key"></label>
+                  </div>
+                  <label><span id="integrationTokenLabel">Private Token</span><input id="integrationAccessTokenInput" type="password" autocomplete="off" placeholder="Stored encrypted after validation"></label>
+                  <label>Assignee Map (optional)<textarea id="integrationAssigneeMapInput" rows="3" placeholder='{"maya": "provider-user-id"}'></textarea></label>
+                  <div class="action-row">
+                    <button id="integrationConnectBtn" class="primary-btn" type="button">Test &amp; Connect</button>
+                    <button id="integrationDisconnectBtn" class="ghost-btn" type="button">Disconnect</button>
+                  </div>
+                  <div id="integrationStatus" class="upload-status"></div>
+                  <div id="integrationList" class="meeting-list"><div class="empty-state">No assignment providers connected.</div></div>
+                </div>
                 <div class="panel nested">
                   <h4>Analysis Settings</h4>
                   <label>Dominance Threshold<input type="range" value="35"></label>
@@ -885,7 +935,7 @@
     </div>
   </div>
   <button id="floatingLiveLauncher" class="floating-live-launcher hidden" type="button">Open Live Copilot</button>
-  <script src="/app.js?v=20260720-landing-refresh2"></script>
+  <script src="/app.js?v=20260721-workspace-integrations1"></script>
 </body>
 </html>
 

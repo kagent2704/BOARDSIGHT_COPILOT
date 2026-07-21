@@ -17,6 +17,7 @@ const state = {
   currentUser: DEFAULT_USER,
   authToken: localStorage.getItem("boardsight-token") || "",
   workspaces: [],
+  integrations: [],
   currentWorkspaceId: localStorage.getItem("boardsight-workspace-id") || "",
   pricingPlans: [],
   billingCycle: "monthly",
@@ -145,22 +146,68 @@ const liveAskSummaryBtn = document.getElementById("liveAskSummaryBtn");
 const liveAskDecisionsBtn = document.getElementById("liveAskDecisionsBtn");
 const liveAskActionsBtn = document.getElementById("liveAskActionsBtn");
 const liveAskBlockersBtn = document.getElementById("liveAskBlockersBtn");
-const gitlabBaseUrlInput = document.getElementById("gitlabBaseUrlInput");
-const gitlabProjectIdInput = document.getElementById("gitlabProjectIdInput");
-const gitlabPrivateTokenInput = document.getElementById("gitlabPrivateTokenInput");
-const gitlabAssigneeMapInput = document.getElementById("gitlabAssigneeMapInput");
+const assignmentProviderInput = document.getElementById("assignmentProviderInput");
+const assignmentBaseUrlInput = document.getElementById("assignmentBaseUrlInput");
+const assignmentBaseUrlField = document.getElementById("assignmentBaseUrlField");
+const assignmentTargetInput = document.getElementById("assignmentTargetInput");
+const assignmentTargetLabel = document.getElementById("assignmentTargetLabel");
+const assignmentAccessTokenInput = document.getElementById("assignmentAccessTokenInput");
+const assignmentTokenLabel = document.getElementById("assignmentTokenLabel");
+const assignmentApiKeyInput = document.getElementById("assignmentApiKeyInput");
+const assignmentApiKeyField = document.getElementById("assignmentApiKeyField");
+const assignmentAssigneeMapInput = document.getElementById("assignmentAssigneeMapInput");
 const gitlabPreviewBtn = document.getElementById("gitlabPreviewBtn");
 const gitlabSyncBtn = document.getElementById("gitlabSyncBtn");
 const gitlabStatus = document.getElementById("gitlabStatus");
 const gitlabResult = document.getElementById("gitlabResult");
-const meetingGitlabBaseUrlInput = document.getElementById("meetingGitlabBaseUrlInput");
-const meetingGitlabProjectIdInput = document.getElementById("meetingGitlabProjectIdInput");
-const meetingGitlabPrivateTokenInput = document.getElementById("meetingGitlabPrivateTokenInput");
-const meetingGitlabAssigneeMapInput = document.getElementById("meetingGitlabAssigneeMapInput");
+const meetingAssignmentProviderInput = document.getElementById("meetingAssignmentProviderInput");
+const meetingAssignmentBaseUrlInput = document.getElementById("meetingAssignmentBaseUrlInput");
+const meetingAssignmentBaseUrlField = document.getElementById("meetingAssignmentBaseUrlField");
+const meetingAssignmentTargetInput = document.getElementById("meetingAssignmentTargetInput");
+const meetingAssignmentTargetLabel = document.getElementById("meetingAssignmentTargetLabel");
+const meetingAssignmentAccessTokenInput = document.getElementById("meetingAssignmentAccessTokenInput");
+const meetingAssignmentTokenLabel = document.getElementById("meetingAssignmentTokenLabel");
+const meetingAssignmentApiKeyInput = document.getElementById("meetingAssignmentApiKeyInput");
+const meetingAssignmentApiKeyField = document.getElementById("meetingAssignmentApiKeyField");
+const meetingAssignmentAssigneeMapInput = document.getElementById("meetingAssignmentAssigneeMapInput");
 const meetingGitlabPreviewBtn = document.getElementById("meetingGitlabPreviewBtn");
 const meetingGitlabSyncBtn = document.getElementById("meetingGitlabSyncBtn");
 const meetingGitlabStatus = document.getElementById("meetingGitlabStatus");
 const meetingGitlabResult = document.getElementById("meetingGitlabResult");
+const assignmentProviderMeta = {
+  gitlab: {
+    name: "GitLab",
+    targetLabel: "Project ID or Path",
+    targetPlaceholder: "group/project or 123456",
+    tokenLabel: "Private Token",
+    showBaseUrl: true,
+    showApiKey: false,
+  },
+  notion: {
+    name: "Notion",
+    targetLabel: "Database ID",
+    targetPlaceholder: "Notion database ID",
+    tokenLabel: "Integration Token",
+    showBaseUrl: false,
+    showApiKey: false,
+  },
+  trello: {
+    name: "Trello",
+    targetLabel: "Destination List ID",
+    targetPlaceholder: "Trello list ID",
+    tokenLabel: "API Token",
+    showBaseUrl: false,
+    showApiKey: true,
+  },
+  "microsoft-todo": {
+    name: "Microsoft To Do",
+    targetLabel: "To Do List ID",
+    targetPlaceholder: "Microsoft To Do list ID",
+    tokenLabel: "Graph Access Token",
+    showBaseUrl: false,
+    showApiKey: false,
+  },
+};
 const workflowNewBtn = document.getElementById("workflowNewBtn");
 const workflowSaveBtn = document.getElementById("workflowSaveBtn");
 const workflowComponentButtons = Array.from(document.querySelectorAll(".workflow-component-btn"));
@@ -182,6 +229,20 @@ const workspaceInviteRole = document.getElementById("workspaceInviteRole");
 const workspaceInviteBtn = document.getElementById("workspaceInviteBtn");
 const workspaceInviteResult = document.getElementById("workspaceInviteResult");
 const workspaceMemberList = document.getElementById("workspaceMemberList");
+const integrationProviderSelect = document.getElementById("integrationProviderSelect");
+const integrationBaseUrlField = document.getElementById("integrationBaseUrlField");
+const integrationBaseUrlInput = document.getElementById("integrationBaseUrlInput");
+const integrationTargetLabel = document.getElementById("integrationTargetLabel");
+const integrationTargetInput = document.getElementById("integrationTargetInput");
+const integrationApiKeyField = document.getElementById("integrationApiKeyField");
+const integrationApiKeyInput = document.getElementById("integrationApiKeyInput");
+const integrationTokenLabel = document.getElementById("integrationTokenLabel");
+const integrationAccessTokenInput = document.getElementById("integrationAccessTokenInput");
+const integrationAssigneeMapInput = document.getElementById("integrationAssigneeMapInput");
+const integrationConnectBtn = document.getElementById("integrationConnectBtn");
+const integrationDisconnectBtn = document.getElementById("integrationDisconnectBtn");
+const integrationStatus = document.getElementById("integrationStatus");
+const integrationList = document.getElementById("integrationList");
 const billingCurrentPlanBadge = document.getElementById("billingCurrentPlanBadge");
 const billingRemainingMinutes = document.getElementById("billingRemainingMinutes");
 const billingAllowanceLabel = document.getElementById("billingAllowanceLabel");
@@ -230,6 +291,7 @@ workspaceSwitcherMenu?.addEventListener("click", async (event) => {
   state.currentMeetingId = null;
   state.currentMeeting = null;
   state.liveSession = null;
+  state.integrations = [];
   renderWorkspaceSelector();
   await Promise.all([loadMeetings(), loadActiveLiveSession(), loadWorkspaceSettings()]);
 });
@@ -249,6 +311,9 @@ pricingPlanGrid?.addEventListener("click", (event) => {
 
 workspaceCreateBtn?.addEventListener("click", createBoardSightWorkspace);
 workspaceInviteBtn?.addEventListener("click", inviteWorkspaceMember);
+integrationProviderSelect?.addEventListener("change", syncIntegrationProviderFields);
+integrationConnectBtn?.addEventListener("click", connectWorkspaceIntegration);
+integrationDisconnectBtn?.addEventListener("click", disconnectWorkspaceIntegration);
 
 themeToggle.addEventListener("click", () => {
   state.theme = state.theme === "light" ? "dark" : "light";
@@ -531,9 +596,14 @@ gitlabPreviewBtn?.addEventListener("click", () => runGitLabAssignmentRequest("pr
 gitlabSyncBtn?.addEventListener("click", () => runGitLabAssignmentRequest("sync"));
 meetingGitlabPreviewBtn?.addEventListener("click", () => runMeetingGitLabAssignmentRequest("preview"));
 meetingGitlabSyncBtn?.addEventListener("click", () => runMeetingGitLabAssignmentRequest("sync"));
+assignmentProviderInput?.addEventListener("change", () => syncAssignmentProviderFields("live"));
+meetingAssignmentProviderInput?.addEventListener("change", () => syncAssignmentProviderFields("meeting"));
 floatingLiveLauncher?.addEventListener("click", openLiveCopilotPopup);
 
 syncAuthMode();
+syncAssignmentProviderFields("live");
+syncAssignmentProviderFields("meeting");
+syncIntegrationProviderFields();
 updateUserChip();
 renderLiveSession();
 bootstrapSession();
@@ -773,6 +843,7 @@ function clearSession() {
   state.liveSession = null;
   state.meetings = [];
   state.workspaces = [];
+  state.integrations = [];
   state.currentWorkspaceId = "";
   state.sessionHasProcessed = false;
   state.demoGuide = [];
@@ -923,6 +994,115 @@ async function loadWorkspaceSettings() {
   workspaceInviteEmail?.toggleAttribute("disabled", !canManage);
   workspaceInviteRole?.toggleAttribute("disabled", !canManage);
   workspaceInviteBtn?.toggleAttribute("disabled", !canManage);
+  integrationProviderSelect?.toggleAttribute("disabled", !canManage);
+  integrationConnectBtn?.toggleAttribute("disabled", !canManage);
+  integrationDisconnectBtn?.toggleAttribute("disabled", !canManage);
+  await loadWorkspaceIntegrations();
+}
+
+function selectedIntegrationProvider() {
+  return integrationProviderSelect?.value || "gitlab";
+}
+
+function canManageCurrentWorkspace() {
+  const current = state.workspaces.find((workspace) => String(workspace.id) === String(state.currentWorkspaceId));
+  return ["owner", "admin"].includes(String(current?.role || "").toLowerCase());
+}
+
+function syncIntegrationProviderFields() {
+  const provider = selectedIntegrationProvider();
+  const meta = assignmentProviderMeta[provider] || assignmentProviderMeta.gitlab;
+  if (integrationTargetLabel) integrationTargetLabel.textContent = meta.targetLabel;
+  if (integrationTargetInput) integrationTargetInput.placeholder = meta.targetPlaceholder;
+  if (integrationTokenLabel) integrationTokenLabel.textContent = meta.tokenLabel;
+  integrationBaseUrlField?.classList.toggle("hidden", !meta.showBaseUrl);
+  integrationApiKeyField?.classList.toggle("hidden", !meta.showApiKey);
+  const existing = state.integrations.find((item) => item.provider === provider);
+  if (integrationTargetInput) integrationTargetInput.value = existing?.target_id || "";
+  if (integrationBaseUrlInput) integrationBaseUrlInput.value = existing?.base_url || (provider === "gitlab" ? "https://gitlab.com" : "");
+  if (integrationAccessTokenInput) integrationAccessTokenInput.value = "";
+  if (integrationApiKeyInput) integrationApiKeyInput.value = "";
+  if (integrationAssigneeMapInput) integrationAssigneeMapInput.value = "";
+  if (integrationConnectBtn) integrationConnectBtn.disabled = !canManageCurrentWorkspace();
+  if (integrationDisconnectBtn) integrationDisconnectBtn.disabled = !canManageCurrentWorkspace() || !existing;
+}
+
+function integrationConnectionPayload() {
+  const payload = {};
+  const baseUrl = integrationBaseUrlInput?.value.trim() || "";
+  const targetId = integrationTargetInput?.value.trim() || "";
+  const accessToken = integrationAccessTokenInput?.value.trim() || "";
+  const apiKey = integrationApiKeyInput?.value.trim() || "";
+  const assigneeMap = integrationAssigneeMapInput?.value.trim() || "";
+  if (baseUrl) payload.base_url = baseUrl;
+  if (targetId) payload.target_id = targetId;
+  if (accessToken) payload.access_token = accessToken;
+  if (apiKey) payload.api_key = apiKey;
+  if (assigneeMap) payload.assignee_map = assigneeMap;
+  return payload;
+}
+
+async function loadWorkspaceIntegrations() {
+  if (!state.currentWorkspaceId || !integrationList) return;
+  const response = await apiFetch(`/api/v1/workspaces/${encodeURIComponent(state.currentWorkspaceId)}/integrations`);
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    integrationList.innerHTML = '<div class="empty-state">Connections are unavailable right now.</div>';
+    return;
+  }
+  state.integrations = Array.isArray(payload.items) ? payload.items : [];
+  integrationList.innerHTML = state.integrations.length
+    ? state.integrations.map((item) => `<div class="meeting-item integration-item">
+        <div class="meeting-meta"><strong>${escapeHtml(assignmentProviderName(item.provider))}</strong><span>${escapeHtml(item.destination_name || item.target_id || "Connected destination")}</span></div>
+        <span class="status-pill success">Connected</span>
+      </div>`).join("")
+    : '<div class="empty-state">No assignment providers connected.</div>';
+  syncIntegrationProviderFields();
+}
+
+async function connectWorkspaceIntegration() {
+  if (!state.currentWorkspaceId || !canManageCurrentWorkspace()) return;
+  const provider = selectedIntegrationProvider();
+  const providerName = assignmentProviderName(provider);
+  if (integrationStatus) integrationStatus.textContent = `Testing ${providerName} and validating the destination...`;
+  integrationConnectBtn?.toggleAttribute("disabled", true);
+  try {
+    const response = await apiFetch(`/api/v1/workspaces/${encodeURIComponent(state.currentWorkspaceId)}/integrations/${encodeURIComponent(provider)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(integrationConnectionPayload()),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (integrationStatus) integrationStatus.textContent = normalizeMessage(payload.detail || `Unable to connect ${providerName}.`);
+      return;
+    }
+    if (integrationStatus) integrationStatus.textContent = `${providerName} connected. Assignment screens will now use this workspace destination automatically.`;
+    await loadWorkspaceIntegrations();
+  } catch (error) {
+    if (integrationStatus) integrationStatus.textContent = normalizeMessage(error?.message || `Unable to connect ${providerName}.`);
+  } finally {
+    integrationConnectBtn?.toggleAttribute("disabled", !canManageCurrentWorkspace());
+  }
+}
+
+async function disconnectWorkspaceIntegration() {
+  if (!state.currentWorkspaceId || !canManageCurrentWorkspace()) return;
+  const provider = selectedIntegrationProvider();
+  const providerName = assignmentProviderName(provider);
+  if (integrationStatus) integrationStatus.textContent = `Disconnecting ${providerName}...`;
+  try {
+    const response = await apiFetch(`/api/v1/workspaces/${encodeURIComponent(state.currentWorkspaceId)}/integrations/${encodeURIComponent(provider)}`, { method: "DELETE" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (integrationStatus) integrationStatus.textContent = normalizeMessage(payload.detail || `Unable to disconnect ${providerName}.`);
+      return;
+    }
+    if (integrationStatus) integrationStatus.textContent = `${providerName} disconnected.`;
+    await loadWorkspaceIntegrations();
+  } catch (error) {
+    if (integrationStatus) integrationStatus.textContent = normalizeMessage(error?.message || `Unable to disconnect ${providerName}.`);
+  }
 }
 
 function renderWorkspaceUsage(current) {
@@ -2896,45 +3076,46 @@ function askLiveShortcut(question) {
   submitLiveQuestion();
 }
 
-function gitLabConnectionPayload() {
-  const payload = {};
-  const baseUrl = (gitlabBaseUrlInput?.value || "").trim();
-  const projectId = (gitlabProjectIdInput?.value || "").trim();
-  const privateToken = (gitlabPrivateTokenInput?.value || "").trim();
-  const assigneeMap = (gitlabAssigneeMapInput?.value || "").trim();
-  if (baseUrl) {
-    payload.base_url = baseUrl;
-  }
-  if (projectId) {
-    payload.project_id = projectId;
-  }
-  if (privateToken) {
-    payload.private_token = privateToken;
-  }
-  if (assigneeMap) {
-    payload.assignee_map = assigneeMap;
-  }
-  return payload;
+function assignmentProvider(mode) {
+  const select = mode === "meeting" ? meetingAssignmentProviderInput : assignmentProviderInput;
+  return select?.value || "gitlab";
 }
 
-function meetingGitLabConnectionPayload() {
+function assignmentProviderName(provider) {
+  return assignmentProviderMeta[provider]?.name || provider;
+}
+
+function syncAssignmentProviderFields(mode) {
+  const provider = assignmentProvider(mode);
+  const meta = assignmentProviderMeta[provider] || assignmentProviderMeta.gitlab;
+  const isMeeting = mode === "meeting";
+  const targetLabel = isMeeting ? meetingAssignmentTargetLabel : assignmentTargetLabel;
+  const targetInput = isMeeting ? meetingAssignmentTargetInput : assignmentTargetInput;
+  const tokenLabel = isMeeting ? meetingAssignmentTokenLabel : assignmentTokenLabel;
+  const baseUrlField = isMeeting ? meetingAssignmentBaseUrlField : assignmentBaseUrlField;
+  const apiKeyField = isMeeting ? meetingAssignmentApiKeyField : assignmentApiKeyField;
+  if (targetLabel) targetLabel.textContent = meta.targetLabel;
+  if (targetInput) targetInput.placeholder = meta.targetPlaceholder;
+  if (tokenLabel) tokenLabel.textContent = meta.tokenLabel;
+  baseUrlField?.classList.toggle("hidden", !meta.showBaseUrl);
+  apiKeyField?.classList.toggle("hidden", !meta.showApiKey);
+  const syncButton = isMeeting ? meetingGitlabSyncBtn : gitlabSyncBtn;
+  if (syncButton) syncButton.textContent = `Send to ${meta.name}`;
+}
+
+function assignmentConnectionPayload(mode) {
+  const isMeeting = mode === "meeting";
+  const baseUrl = ((isMeeting ? meetingAssignmentBaseUrlInput : assignmentBaseUrlInput)?.value || "").trim();
+  const targetId = ((isMeeting ? meetingAssignmentTargetInput : assignmentTargetInput)?.value || "").trim();
+  const accessToken = ((isMeeting ? meetingAssignmentAccessTokenInput : assignmentAccessTokenInput)?.value || "").trim();
+  const apiKey = ((isMeeting ? meetingAssignmentApiKeyInput : assignmentApiKeyInput)?.value || "").trim();
+  const assigneeMap = ((isMeeting ? meetingAssignmentAssigneeMapInput : assignmentAssigneeMapInput)?.value || "").trim();
   const payload = {};
-  const baseUrl = (meetingGitlabBaseUrlInput?.value || "").trim();
-  const projectId = (meetingGitlabProjectIdInput?.value || "").trim();
-  const privateToken = (meetingGitlabPrivateTokenInput?.value || "").trim();
-  const assigneeMap = (meetingGitlabAssigneeMapInput?.value || "").trim();
-  if (baseUrl) {
-    payload.base_url = baseUrl;
-  }
-  if (projectId) {
-    payload.project_id = projectId;
-  }
-  if (privateToken) {
-    payload.private_token = privateToken;
-  }
-  if (assigneeMap) {
-    payload.assignee_map = assigneeMap;
-  }
+  if (baseUrl) payload.base_url = baseUrl;
+  if (targetId) payload.target_id = targetId;
+  if (accessToken) payload.access_token = accessToken;
+  if (apiKey) payload.api_key = apiKey;
+  if (assigneeMap) payload.assignee_map = assigneeMap;
   return payload;
 }
 
@@ -2945,12 +3126,15 @@ function renderGitLabResult(payload, mode) {
   const plan = payload.plan || {};
   const issues = plan.issues || [];
   const syncResult = payload.sync_result || {};
-  const createdIssues = syncResult.created_issues || [];
+  const provider = payload.provider || syncResult.provider || assignmentProvider("live");
+  const providerName = assignmentProviderName(provider);
+  const createdIssues = syncResult.created_tasks || syncResult.created_issues || [];
   const createdLinks = syncResult.created_links || [];
   const summaryLines = [
     `${mode === "sync" ? "Sync" : "Preview"} status: ${escapeHtml(payload.status || "unknown")}`,
     `Meeting: ${escapeHtml(payload.meeting_title || plan.meeting_title || "Live session")}`,
-    `Planned issues: ${issues.length}`,
+    `Destination: ${escapeHtml(providerName)}`,
+    `Planned tasks: ${issues.length}`,
     `Dependency links: ${(plan.issue_links || []).length}`,
   ];
   if (payload.approval_id) {
@@ -2971,15 +3155,15 @@ function renderGitLabResult(payload, mode) {
       return `${issue.local_key} | ${issue.kind} | ${issue.title}${owner}${dueDate}`;
     });
 
-  const createdLines = createdIssues.map((issue) => `${issue.local_key} -> #${issue.iid} ${issue.title || ""}`.trim());
+  const createdLines = createdIssues.map((issue) => `${issue.local_key} -> ${issue.iid ? `#${issue.iid}` : issue.id || "created"} ${issue.title || ""}`.trim());
   const linkLines = createdLinks.map((link) => `#${link.source_issue_iid} ${link.link_type || "links"} #${link.target_issue_iid}`);
 
   gitlabResult.textContent = [
     summaryLines.join("\n"),
     "",
-    "Planned issues:",
+    "Planned tasks:",
     issueLines.join("\n"),
-    createdLines.length > 0 ? `\nCreated issues:\n${createdLines.join("\n")}` : "",
+    createdLines.length > 0 ? `\nCreated in ${providerName}:\n${createdLines.join("\n")}` : "",
     linkLines.length > 0 ? `\nCreated links:\n${linkLines.join("\n")}` : "",
   ].filter(Boolean).join("\n");
 }
@@ -2991,12 +3175,15 @@ function renderMeetingGitLabResult(payload, mode) {
   const plan = payload.plan || {};
   const issues = plan.issues || [];
   const syncResult = payload.sync_result || {};
-  const createdIssues = syncResult.created_issues || [];
+  const provider = payload.provider || syncResult.provider || assignmentProvider("meeting");
+  const providerName = assignmentProviderName(provider);
+  const createdIssues = syncResult.created_tasks || syncResult.created_issues || [];
   const createdLinks = syncResult.created_links || [];
   const summaryLines = [
     `${mode === "sync" ? "Sync" : "Preview"} status: ${escapeHtml(payload.status || "unknown")}`,
     `Meeting: ${escapeHtml(payload.meeting_title || plan.meeting_title || "Recorded meeting")}`,
-    `Planned issues: ${issues.length}`,
+    `Destination: ${escapeHtml(providerName)}`,
+    `Planned tasks: ${issues.length}`,
     `Dependency links: ${(plan.issue_links || []).length}`,
   ];
   if (payload.approval_id) {
@@ -3015,93 +3202,105 @@ function renderMeetingGitLabResult(payload, mode) {
       const dueDate = issue.due_date ? ` | due ${issue.due_date}` : "";
       return `${issue.local_key} | ${issue.kind} | ${issue.title}${owner}${dueDate}`;
     });
-  const createdLines = createdIssues.map((issue) => `${issue.local_key} -> #${issue.iid} ${issue.title || ""}`.trim());
+  const createdLines = createdIssues.map((issue) => `${issue.local_key} -> ${issue.iid ? `#${issue.iid}` : issue.id || "created"} ${issue.title || ""}`.trim());
   const linkLines = createdLinks.map((link) => `#${link.source_issue_iid} ${link.link_type || "links"} #${link.target_issue_iid}`);
   meetingGitlabResult.textContent = [
     summaryLines.join("\n"),
     "",
-    "Planned issues:",
+    "Planned tasks:",
     issueLines.join("\n"),
-    createdLines.length > 0 ? `\nCreated issues:\n${createdLines.join("\n")}` : "",
+    createdLines.length > 0 ? `\nCreated in ${providerName}:\n${createdLines.join("\n")}` : "",
     linkLines.length > 0 ? `\nCreated links:\n${linkLines.join("\n")}` : "",
   ].filter(Boolean).join("\n");
 }
 
 async function runGitLabAssignmentRequest(mode) {
+  const provider = assignmentProvider("live");
+  const providerName = assignmentProviderName(provider);
   if (!state.liveSession?.session?.id) {
-    setGitLabStatus("Start a live session before using GitLab assignment.");
+    setGitLabStatus(`Start a live session before sending assignments to ${providerName}.`);
     return;
   }
 
   const isSync = mode === "sync";
-  setGitLabStatus(isSync ? "Assigning live-session work into GitLab..." : "Building GitLab preview from the live session...");
+  setGitLabStatus(isSync ? `Sending live-session work to ${providerName}...` : `Building a ${providerName} assignment preview...`);
 
   try {
-    const requestPayload = { ...gitLabConnectionPayload() };
-    if (isSync && state.liveSession?.gitlabApprovalId) {
-      requestPayload.approval_id = state.liveSession.gitlabApprovalId;
+    const requestPayload = assignmentConnectionPayload("live");
+    const approvalIds = state.liveSession?.assignmentApprovalIds || {};
+    if (isSync && approvalIds[provider]) {
+      requestPayload.approval_id = approvalIds[provider];
     }
-    const response = await apiFetch(`/api/v1/live/${encodeURIComponent(state.liveSession.session.id)}/gitlab/${isSync ? "sync" : "preview"}`, {
+    const response = await apiFetch(`/api/v1/live/${encodeURIComponent(state.liveSession.session.id)}/assignments/${encodeURIComponent(provider)}/${isSync ? "sync" : "preview"}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(requestPayload),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      setGitLabStatus(payload.error || payload.detail || "GitLab assignment request failed.");
+      setGitLabStatus(payload.error || payload.detail || `${providerName} assignment request failed.`);
       return;
     }
     if (payload.approval_id) {
-      state.liveSession = { ...state.liveSession, gitlabApprovalId: payload.approval_id };
+      state.liveSession = {
+        ...state.liveSession,
+        assignmentApprovalIds: { ...approvalIds, [provider]: payload.approval_id },
+      };
     }
     renderGitLabResult(payload, mode);
     setGitLabStatus(
       isSync
-        ? (payload.sync_result?.status === "synced" ? "GitLab assignment synced successfully." : "GitLab sync completed in preview or dry-run mode.")
-        : "GitLab preview generated from the current live session."
+        ? (payload.sync_result?.status === "synced" ? `Assignments sent to ${providerName}.` : `${providerName} is not configured yet; the preview is ready.`)
+        : `${providerName} preview generated from the current live session.`
     );
   } catch (error) {
     if (error?.status !== 401) {
-      setGitLabStatus("GitLab assignment is unavailable right now.");
+      setGitLabStatus(`${providerName} assignment delivery is unavailable right now.`);
     }
   }
 }
 
 async function runMeetingGitLabAssignmentRequest(mode) {
+  const provider = assignmentProvider("meeting");
+  const providerName = assignmentProviderName(provider);
   const meetingId = state.currentMeeting?.storage?.meeting_id || state.currentMeetingId;
   if (!meetingId) {
-    setMeetingGitLabStatus("Open a recorded meeting before using GitLab assignment.");
+    setMeetingGitLabStatus(`Open a recorded meeting before sending assignments to ${providerName}.`);
     return;
   }
 
   const isSync = mode === "sync";
-  setMeetingGitLabStatus(isSync ? "Assigning recorded-meeting work into GitLab..." : "Building GitLab preview from the recorded meeting...");
+  setMeetingGitLabStatus(isSync ? `Sending recorded-meeting work to ${providerName}...` : `Building a ${providerName} assignment preview...`);
 
   try {
-    const requestPayload = { ...meetingGitLabConnectionPayload() };
-    if (isSync && state.currentMeeting?.gitlabApprovalId) {
-      requestPayload.approval_id = state.currentMeeting.gitlabApprovalId;
+    const requestPayload = assignmentConnectionPayload("meeting");
+    const approvalIds = state.currentMeeting?.assignmentApprovalIds || {};
+    if (isSync && approvalIds[provider]) {
+      requestPayload.approval_id = approvalIds[provider];
     }
-    const response = await apiFetch(`/api/v1/meetings/${encodeURIComponent(meetingId)}/gitlab/${isSync ? "sync" : "preview"}`, {
+    const response = await apiFetch(`/api/v1/meetings/${encodeURIComponent(meetingId)}/assignments/${encodeURIComponent(provider)}/${isSync ? "sync" : "preview"}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(requestPayload),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      setMeetingGitLabStatus(payload.error || payload.detail || "GitLab assignment request failed.");
+      setMeetingGitLabStatus(payload.error || payload.detail || `${providerName} assignment request failed.`);
       return;
     }
-    state.currentMeeting = { ...state.currentMeeting, gitlabApprovalId: payload.approval_id || state.currentMeeting?.gitlabApprovalId };
+    state.currentMeeting = {
+      ...state.currentMeeting,
+      assignmentApprovalIds: { ...approvalIds, [provider]: payload.approval_id || approvalIds[provider] },
+    };
     renderMeetingGitLabResult(payload, mode);
     setMeetingGitLabStatus(
       isSync
-        ? (payload.sync_result?.status === "synced" ? "Recorded-meeting GitLab assignment synced successfully." : "Recorded-meeting GitLab sync completed in preview or dry-run mode.")
-        : "Recorded-meeting GitLab preview generated."
+        ? (payload.sync_result?.status === "synced" ? `Recorded-meeting assignments sent to ${providerName}.` : `${providerName} is not configured yet; the preview is ready.`)
+        : `Recorded-meeting ${providerName} preview generated.`
     );
   } catch (error) {
     if (error?.status !== 401) {
-      setMeetingGitLabStatus("Recorded-meeting GitLab assignment is unavailable right now.");
+      setMeetingGitLabStatus(`Recorded-meeting ${providerName} delivery is unavailable right now.`);
     }
   }
 }

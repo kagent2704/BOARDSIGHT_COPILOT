@@ -13,11 +13,15 @@ from boardsight_ai.workspaces import (
     create_invitation,
     create_workspace,
     ensure_personal_workspace,
+    delete_workspace_integration,
+    get_workspace_integration,
     get_workspace_for_user,
     init_workspace_storage,
+    list_workspace_integrations,
     release_minutes,
     request_subscription_change,
     reserve_minutes,
+    save_workspace_integration,
     update_member,
     usage_summary,
 )
@@ -41,6 +45,34 @@ def test_personal_workspace_backfills_existing_user_content(tmp_path, sample_pip
     assert stored is not None
     assert stored["organization_id"] == workspace["id"]
     assert stored["created_by_user_id"] == 7
+
+
+def test_workspace_integration_credentials_are_encrypted_and_round_trip(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "integrations.db"
+    monkeypatch.setenv("BOARDSIGHT_DATA_ENCRYPTION_KEY", "workspace-integration-test-key")
+    workspace = ensure_personal_workspace(db_path, _user(7, "kash@example.com", "Kash"))
+    workspace_id = int(workspace["id"])
+
+    save_workspace_integration(
+        db_path,
+        workspace_id,
+        "notion",
+        {"target_id": "database-1", "access_token": "secret-notion-token", "destination_name": "Launch Board"},
+        7,
+    )
+
+    raw = fetchone(db_path, "SELECT encrypted_config FROM organization_integrations WHERE organization_id = :organization_id", {"organization_id": workspace_id})
+    stored = get_workspace_integration(db_path, workspace_id, "notion")
+    listed = list_workspace_integrations(db_path, workspace_id)
+
+    assert raw is not None
+    assert str(raw["encrypted_config"]).startswith("bsenc:v1:")
+    assert "secret-notion-token" not in str(raw["encrypted_config"])
+    assert stored is not None and stored["config"]["access_token"] == "secret-notion-token"
+    assert listed[0]["config"]["destination_name"] == "Launch Board"
+
+    delete_workspace_integration(db_path, workspace_id, "notion")
+    assert get_workspace_integration(db_path, workspace_id, "notion") is None
 
 
 def test_permanent_sponsorship_exists_before_registration_and_bypasses_customer_charging(tmp_path) -> None:
@@ -205,6 +237,47 @@ def test_workspace_api_creates_personal_and_team_workspaces(tmp_path, monkeypatc
     assert plans_response.json()["items"][1]["monthly_price_inr"] == 499
     assert change_response.status_code == 200
     assert change_response.json()["request"]["requested_plan_code"] == "growth"
+
+
+def test_workspace_owner_connects_provider_with_masked_api_response(tmp_path, monkeypatch) -> None:
+    auth_db = tmp_path / "auth.db"
+    meeting_db = tmp_path / "meetings.db"
+    monkeypatch.setenv("BOARDSIGHT_DATA_ENCRYPTION_KEY", "workspace-api-integration-test-key")
+    create_user(auth_db, "integration-owner", "secret", display_name="Integration Owner", email="owner@example.com")
+    session = authenticate_user(auth_db, "integration-owner", "secret")
+    assert session is not None
+    monkeypatch.setattr("boardsight_ai.service.AUTH_DB_PATH", auth_db)
+    monkeypatch.setattr("boardsight_ai.service.MEETING_DB_PATH", meeting_db)
+    monkeypatch.setattr(
+        "boardsight_ai.service.validate_provider_connection",
+        lambda provider, config, overrides: {
+            "provider": provider,
+            "status": "connected",
+            "destination_name": "Launch Board",
+        },
+    )
+    client = TestClient(app)
+    headers = {"Authorization": f"Bearer {session['token']}"}
+    workspace = client.get("/api/v1/me", headers=headers).json()["workspace"]
+    workspace_id = int(workspace["id"])
+
+    connect_response = client.put(
+        f"/api/v1/workspaces/{workspace_id}/integrations/notion",
+        headers=headers,
+        json={"target_id": "database-1", "access_token": "do-not-return"},
+    )
+    list_response = client.get(f"/api/v1/workspaces/{workspace_id}/integrations", headers=headers)
+    raw = fetchone(meeting_db, "SELECT encrypted_config FROM organization_integrations WHERE organization_id = :organization_id", {"organization_id": workspace_id})
+
+    assert connect_response.status_code == 200
+    assert connect_response.json()["integration"]["has_access_token"] is True
+    assert "access_token" not in connect_response.json()["integration"]
+    assert "do-not-return" not in connect_response.text
+    assert list_response.status_code == 200
+    assert list_response.json()["can_manage"] is True
+    assert list_response.json()["items"][0]["destination_name"] == "Launch Board"
+    assert raw is not None and str(raw["encrypted_config"]).startswith("bsenc:v1:")
+    assert "do-not-return" not in str(raw["encrypted_config"])
 
 
 def test_registration_cannot_self_assign_global_admin(tmp_path, monkeypatch) -> None:

@@ -151,6 +151,19 @@ From the `Live Meeting` workspace in the UI you can:
 
 Live copilot answers are grounded in the transcript accumulated so far and fall back to local heuristic reasoning if Gemini is unavailable.
 
+## Assignment Delivery
+
+Recorded meetings and live sessions can turn BoardSight's execution plan into tasks in GitLab, Notion, Trello, or Microsoft To Do. Previewing is provider-neutral and does not call the external service. Workspace owners and admins can validate and save a GitLab, Notion, or Trello destination from Settings; members then reuse that encrypted workspace connection when sending assignments. Request-level and environment defaults remain available for one-off and self-hosted setups.
+
+| Provider | Destination | Credentials |
+| --- | --- | --- |
+| GitLab | Project ID or path | `BOARDSIGHT_GITLAB_PRIVATE_TOKEN` and optional `BOARDSIGHT_GITLAB_BASE_URL` |
+| Notion | Database ID | `BOARDSIGHT_NOTION_API_TOKEN`; share the database with that integration |
+| Trello | List ID | `BOARDSIGHT_TRELLO_API_KEY` and `BOARDSIGHT_TRELLO_API_TOKEN` |
+| Microsoft To Do | To Do list ID | `BOARDSIGHT_MICROSOFT_GRAPH_ACCESS_TOKEN` with delegated `Tasks.ReadWrite` permission |
+
+Saved workspace credentials are encrypted with `BOARDSIGHT_DATA_ENCRYPTION_KEY` and API responses expose only masked connection state. Request-level credentials are used only for that request. Microsoft To Do remains a delegated OAuth integration because Microsoft Graph does not support application-only access for To Do tasks; its access tokens are not saved by the workspace credential form.
+
 ## CLI Run
 
 ```powershell

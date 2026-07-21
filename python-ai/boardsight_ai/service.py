@@ -60,6 +60,12 @@ from boardsight_ai.data_protection import data_encryption_enabled, data_encrypti
 from boardsight_ai.emailer import send_verification_email
 from boardsight_ai.gitlab_execution import build_gitlab_execution_plan, normalize_gitlab_plan_source, sync_plan_to_gitlab
 from boardsight_ai.gitlab_storage import init_gitlab_storage, protect_gitlab_storage, save_gitlab_sync
+from boardsight_ai.task_delivery import (
+    normalize_assignment_provider,
+    provider_connection_summary,
+    sync_plan_to_provider,
+    validate_provider_connection,
+)
 from boardsight_ai.identity_validation import normalize_registration_email, normalize_registration_username, validate_registration_display_name
 from boardsight_ai.providers.speech import _faster_whisper_model
 from boardsight_ai.providers.vision import analyze_sparse_frame
@@ -92,15 +98,19 @@ from boardsight_ai.workspaces import (
     commit_minutes,
     create_invitation,
     create_workspace,
+    delete_workspace_integration,
     ensure_personal_workspace,
+    get_workspace_integration,
     get_workspace_for_user,
     init_workspace_storage,
+    list_workspace_integrations,
     list_workspace_members,
     list_workspaces_for_user,
     plan_catalog,
     release_minutes,
     request_subscription_change,
     reserve_minutes,
+    save_workspace_integration,
     set_subscription,
     update_member,
     usage_summary,
@@ -983,6 +993,82 @@ def workspace_members(organization_id: int, request: Request) -> dict:
     return {"items": members}
 
 
+def _public_integration_payload(integration: dict) -> dict:
+    config = dict(integration.get("config") or {})
+    return {
+        "provider": str(integration.get("provider") or ""),
+        "status": str(integration.get("status") or "inactive"),
+        "target_id": str(config.get("target_id") or ""),
+        "base_url": str(config.get("base_url") or ""),
+        "destination_name": str(config.get("destination_name") or config.get("target_id") or ""),
+        "has_access_token": bool(config.get("access_token")),
+        "has_api_key": bool(config.get("api_key")),
+        "updated_at": integration.get("updated_at"),
+    }
+
+
+@app.get("/api/v1/workspaces/{organization_id}/integrations")
+def workspace_integrations(organization_id: int, request: Request) -> dict:
+    user = _require_session_user(request)
+    workspace = get_workspace_for_user(MEETING_DB_PATH, organization_id, int(user["user_id"]))
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    items = list_workspace_integrations(MEETING_DB_PATH, organization_id)
+    return {
+        "items": [_public_integration_payload(item) for item in items],
+        "can_manage": str(workspace.get("membership_role") or "").lower() in {"owner", "admin"},
+    }
+
+
+@app.put("/api/v1/workspaces/{organization_id}/integrations/{provider}")
+async def connect_workspace_integration(organization_id: int, provider: str, request: Request, payload: dict | None = None) -> dict:
+    user = _require_session_user(request)
+    workspace = get_workspace_for_user(MEETING_DB_PATH, organization_id, int(user["user_id"]))
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    try:
+        assert_workspace_access(workspace, require_admin=True)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    if not data_encryption_enabled():
+        raise HTTPException(status_code=503, detail="Encrypted integration storage is not configured.")
+    normalized_provider = _normalize_provider_or_400(provider)
+    if normalized_provider == "microsoft-todo":
+        raise HTTPException(status_code=400, detail="Microsoft To Do requires the Microsoft OAuth connection flow.")
+    request_payload = await _collect_request_payload(request, payload)
+    connection = _assignment_connection_overrides(request_payload)
+    try:
+        validation = validate_provider_connection(normalized_provider, default_config(), connection)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    stored_config = {**connection, "destination_name": validation.get("destination_name")}
+    integration = save_workspace_integration(
+        MEETING_DB_PATH,
+        organization_id,
+        normalized_provider,
+        stored_config,
+        int(user["user_id"]),
+    )
+    return {"status": "connected", "integration": _public_integration_payload(integration)}
+
+
+@app.delete("/api/v1/workspaces/{organization_id}/integrations/{provider}")
+def disconnect_workspace_integration(organization_id: int, provider: str, request: Request) -> dict:
+    user = _require_session_user(request)
+    workspace = get_workspace_for_user(MEETING_DB_PATH, organization_id, int(user["user_id"]))
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    try:
+        assert_workspace_access(workspace, require_admin=True)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    normalized_provider = _normalize_provider_or_400(provider)
+    delete_workspace_integration(MEETING_DB_PATH, organization_id, normalized_provider)
+    return {"status": "disconnected", "provider": normalized_provider}
+
+
 @app.post("/api/v1/workspaces/{organization_id}/invitations")
 async def invite_workspace_member(organization_id: int, request: Request, payload: dict | None = None) -> dict:
     user = _require_session_user(request)
@@ -1157,6 +1243,20 @@ async def meeting_gitlab_sync(meeting_id: int, request: Request, payload: dict |
     return _sync_meeting_gitlab_preview(meeting_id, user, request_payload)
 
 
+@app.post("/api/v1/meetings/{meeting_id}/assignments/{provider}/preview")
+async def meeting_assignment_preview(meeting_id: int, provider: str, request: Request, payload: dict | None = None) -> dict:
+    user = _require_session_user(request)
+    request_payload = await _collect_request_payload(request, payload)
+    return _create_meeting_assignment_preview(meeting_id, provider, user, request_payload)
+
+
+@app.post("/api/v1/meetings/{meeting_id}/assignments/{provider}/sync")
+async def meeting_assignment_sync(meeting_id: int, provider: str, request: Request, payload: dict | None = None) -> dict:
+    user = _require_session_user(request)
+    request_payload = await _collect_request_payload(request, payload)
+    return _sync_meeting_assignment_preview(meeting_id, provider, user, request_payload)
+
+
 @app.get("/api/v1/meetings/{meeting_id}/reports/{file_name}")
 def meeting_report(meeting_id: int, file_name: str, request: Request):
     user = _user_with_workspace(request, _require_session_user(request))
@@ -1278,6 +1378,245 @@ def _gitlab_connection_overrides(request_payload: dict[str, Any]) -> dict[str, A
         if value:
             overrides[output_key] = value
     return overrides
+
+
+def _assignment_connection_overrides(request_payload: dict[str, Any]) -> dict[str, Any]:
+    overrides: dict[str, Any] = {}
+    for key in ("base_url", "target_id", "access_token", "api_key"):
+        value = str(request_payload.get(key) or "").strip()
+        if value:
+            overrides[key] = value
+    raw_assignee_map = request_payload.get("assignee_map")
+    if isinstance(raw_assignee_map, str) and raw_assignee_map.strip():
+        try:
+            raw_assignee_map = json.loads(raw_assignee_map)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=400, detail="Assignee map must be valid JSON.") from exc
+    if raw_assignee_map is not None and not isinstance(raw_assignee_map, dict):
+        raise HTTPException(status_code=400, detail="Assignee map must be a JSON object.")
+    assignee_map = {
+        str(key).strip().lower(): str(value).strip()
+        for key, value in (raw_assignee_map or {}).items()
+        if str(key).strip() and str(value).strip()
+    }
+    if assignee_map:
+        overrides["assignee_map"] = assignee_map
+    return overrides
+
+
+def _normalize_provider_or_400(provider: str) -> str:
+    try:
+        return normalize_assignment_provider(provider)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _resolved_assignment_connection(
+    workspace: dict[str, Any],
+    provider: str,
+    request_payload: dict[str, Any],
+) -> dict[str, Any]:
+    stored = get_workspace_integration(MEETING_DB_PATH, int(workspace["id"]), provider)
+    stored_config = dict(stored.get("config") or {}) if stored and stored.get("status") == "active" else {}
+    request_config = _assignment_connection_overrides(request_payload)
+    return {**stored_config, **request_config}
+
+
+def _create_assignment_preview_for_payload(
+    *,
+    provider: str,
+    source_kind: str,
+    source_id: str,
+    source_payload: dict[str, Any],
+    user: dict[str, Any],
+    request_payload: dict[str, Any],
+) -> dict[str, Any]:
+    normalized_provider = _normalize_provider_or_400(provider)
+    workspace = _workspace_context(user, require_license=True)
+    config = default_config()
+    connection_overrides = _resolved_assignment_connection(workspace, normalized_provider, request_payload)
+    meeting_title = _meeting_title_from_payload(source_kind, source_id, source_payload)
+    plan = build_gitlab_execution_plan(
+        normalize_gitlab_plan_source(source_payload),
+        source_kind=source_kind,
+        source_id=source_id,
+        meeting_title=meeting_title,
+        assignee_map=(
+            _build_assignee_map(connection_overrides.get("assignee_map"))
+            if normalized_provider == "gitlab"
+            else None
+        ),
+    )
+    execution_run = create_agent_execution_run(
+        MEETING_DB_PATH,
+        source_kind=source_kind,
+        source_id=source_id,
+        meeting_title=plan["meeting_title"],
+        created_by_user_id=int(user["user_id"]),
+        plan=plan,
+        action_type=f"{normalized_provider}-sync",
+    )
+    if normalized_provider == "gitlab":
+        save_gitlab_sync(
+            MEETING_DB_PATH,
+            organization_id=int(workspace["id"]),
+            source_kind=source_kind,
+            source_id=source_id,
+            project_ref=str(connection_overrides.get("target_id") or config.gitlab_project_id or ""),
+            dry_run=True,
+            plan=plan,
+            sync_result=None,
+        )
+    return {
+        "approval_id": execution_run.get("approval_id"),
+        "status": "previewed",
+        "provider": normalized_provider,
+        "meeting_title": plan["meeting_title"],
+        "plan": plan,
+        "connection": provider_connection_summary(normalized_provider, config, connection_overrides),
+    }
+
+
+def _create_meeting_assignment_preview(
+    meeting_id: int,
+    provider: str,
+    user: dict[str, Any],
+    request_payload: dict[str, Any],
+) -> dict[str, Any]:
+    record = _resolve_owned_meeting_record(meeting_id, user)
+    meeting_payload = json.loads(str(record.get("result_json") or "{}"))
+    meeting_payload.setdefault("metadata", {})
+    if isinstance(meeting_payload["metadata"], dict):
+        meeting_payload["metadata"].setdefault("run_name", str(record.get("run_name") or ""))
+    return _create_assignment_preview_for_payload(
+        provider=provider,
+        source_kind="meeting",
+        source_id=str(meeting_id),
+        source_payload=meeting_payload,
+        user=user,
+        request_payload=request_payload,
+    )
+
+
+def _create_live_assignment_preview(
+    session_id: int,
+    provider: str,
+    user: dict[str, Any],
+    request_payload: dict[str, Any],
+) -> dict[str, Any]:
+    session_row = _resolve_owned_live_session(session_id, user)
+    event_rows = get_live_session_events(MEETING_DB_PATH, session_id)
+    visual_rows = get_live_session_visual_events(MEETING_DB_PATH, session_id)
+    live_payload = build_live_session_payload(session_row, event_rows, default_config(), visual_rows=visual_rows)
+    return _create_assignment_preview_for_payload(
+        provider=provider,
+        source_kind="live-session",
+        source_id=str(session_id),
+        source_payload=live_payload,
+        user=user,
+        request_payload=request_payload,
+    )
+
+
+def _sync_assignment_preview(
+    *,
+    provider: str,
+    source_kind: str,
+    source_id: str,
+    user: dict[str, Any],
+    request_payload: dict[str, Any],
+    preview_builder,
+) -> dict[str, Any]:
+    normalized_provider = _normalize_provider_or_400(provider)
+    workspace = _workspace_context(user, require_license=True)
+    approval_id = str(request_payload.get("approval_id") or "").strip()
+    execution_run = get_agent_execution_run(MEETING_DB_PATH, approval_id) if approval_id else None
+    if execution_run is not None:
+        if int(execution_run.get("created_by_user_id") or 0) != int(user["user_id"]):
+            raise HTTPException(status_code=404, detail="Assignment preview not found.")
+        if str(execution_run.get("action_type") or "") != f"{normalized_provider}-sync":
+            execution_run = None
+    if execution_run is None:
+        preview_payload = preview_builder()
+        approval_id = str(preview_payload.get("approval_id") or "")
+        execution_run = get_agent_execution_run(MEETING_DB_PATH, approval_id)
+    if execution_run is None:
+        raise HTTPException(status_code=500, detail="Unable to create an assignment preview.")
+
+    config = default_config()
+    connection_overrides = _resolved_assignment_connection(workspace, normalized_provider, request_payload)
+    plan = dict(execution_run.get("plan_json") or {})
+    try:
+        sync_result = sync_plan_to_provider(
+            normalized_provider,
+            plan,
+            config,
+            connection_overrides=connection_overrides,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    connection = provider_connection_summary(normalized_provider, config, connection_overrides)
+    update_agent_execution_run(
+        MEETING_DB_PATH,
+        approval_id,
+        status=str(sync_result.get("status") or "synced"),
+        approved_by_user_id=int(user["user_id"]),
+        connection=connection,
+        sync_result=sync_result,
+    )
+    if normalized_provider == "gitlab":
+        save_gitlab_sync(
+            MEETING_DB_PATH,
+            organization_id=int(workspace["id"]),
+            source_kind=source_kind,
+            source_id=source_id,
+            project_ref=str(connection.get("target_id") or ""),
+            dry_run=sync_result.get("status") != "synced",
+            plan=plan,
+            sync_result=sync_result,
+        )
+    return {
+        "approval_id": approval_id,
+        "status": str(sync_result.get("status") or "unknown"),
+        "provider": normalized_provider,
+        "meeting_title": str(execution_run.get("meeting_title") or ""),
+        "plan": plan,
+        "sync_result": sync_result,
+    }
+
+
+def _sync_meeting_assignment_preview(
+    meeting_id: int,
+    provider: str,
+    user: dict[str, Any],
+    request_payload: dict[str, Any],
+) -> dict[str, Any]:
+    _resolve_owned_meeting_record(meeting_id, user)
+    return _sync_assignment_preview(
+        provider=provider,
+        source_kind="meeting",
+        source_id=str(meeting_id),
+        user=user,
+        request_payload=request_payload,
+        preview_builder=lambda: _create_meeting_assignment_preview(meeting_id, provider, user, request_payload),
+    )
+
+
+def _sync_live_assignment_preview(
+    session_id: int,
+    provider: str,
+    user: dict[str, Any],
+    request_payload: dict[str, Any],
+) -> dict[str, Any]:
+    _resolve_owned_live_session(session_id, user)
+    return _sync_assignment_preview(
+        provider=provider,
+        source_kind="live-session",
+        source_id=str(session_id),
+        user=user,
+        request_payload=request_payload,
+        preview_builder=lambda: _create_live_assignment_preview(session_id, provider, user, request_payload),
+    )
 
 
 def _create_gitlab_preview_for_payload(
@@ -1639,6 +1978,20 @@ async def live_gitlab_sync(session_id: int, request: Request, payload: dict | No
     user = _user_with_workspace(request, _require_session_user(request), require_license=True)
     request_payload = await _collect_request_payload(request, payload)
     return _sync_live_gitlab_preview(session_id, user, request_payload)
+
+
+@app.post("/api/v1/live/{session_id}/assignments/{provider}/preview")
+async def live_assignment_preview(session_id: int, provider: str, request: Request, payload: dict | None = None) -> dict:
+    user = _require_session_user(request)
+    request_payload = await _collect_request_payload(request, payload)
+    return _create_live_assignment_preview(session_id, provider, user, request_payload)
+
+
+@app.post("/api/v1/live/{session_id}/assignments/{provider}/sync")
+async def live_assignment_sync(session_id: int, provider: str, request: Request, payload: dict | None = None) -> dict:
+    user = _require_session_user(request)
+    request_payload = await _collect_request_payload(request, payload)
+    return _sync_live_assignment_preview(session_id, provider, user, request_payload)
 
 
 @app.post("/api/v1/live/{session_id}/finalize")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import Any
 from sqlalchemy import text
 
 from boardsight_ai.database import execute, fetchall, fetchone, get_engine, insert_and_return_id, is_postgres, table_columns
+from boardsight_ai.data_protection import decrypt_json_text, encrypt_text
 
 
 PLAN_ENTITLEMENTS: dict[str, dict[str, int]] = {
@@ -536,6 +538,79 @@ def assert_workspace_access(workspace: dict[str, Any], *, require_admin: bool = 
     is_sponsored = bool(workspace.get("user_sponsorship_id")) or str(workspace.get("billing_mode") or "").lower() == "internal_sponsored"
     if require_license and not is_sponsored and str(workspace.get("subscription_status") or "").lower() not in {"active", "trialing"}:
         raise PermissionError("The workspace subscription is not active.")
+
+
+def get_workspace_integration(database_path: Path, organization_id: int, provider: str) -> dict[str, Any] | None:
+    init_workspace_storage(database_path)
+    row = fetchone(
+        database_path,
+        "SELECT * FROM organization_integrations WHERE organization_id = :organization_id AND provider = :provider",
+        {"organization_id": organization_id, "provider": provider},
+    )
+    if row is None:
+        return None
+    payload = dict(row)
+    encrypted_config = payload.pop("encrypted_config", None)
+    try:
+        payload["config"] = json.loads(decrypt_json_text(encrypted_config)) if encrypted_config else {}
+    except (ValueError, RuntimeError):
+        payload["config"] = {}
+        payload["status"] = "unavailable"
+    return payload
+
+
+def list_workspace_integrations(database_path: Path, organization_id: int) -> list[dict[str, Any]]:
+    init_workspace_storage(database_path)
+    rows = fetchall(
+        database_path,
+        "SELECT * FROM organization_integrations WHERE organization_id = :organization_id ORDER BY provider",
+        {"organization_id": organization_id},
+    )
+    return [
+        integration
+        for row in rows
+        if (integration := get_workspace_integration(database_path, organization_id, str(row["provider"]))) is not None
+    ]
+
+
+def save_workspace_integration(
+    database_path: Path,
+    organization_id: int,
+    provider: str,
+    config: dict[str, Any],
+    created_by_user_id: int,
+) -> dict[str, Any]:
+    init_workspace_storage(database_path)
+    encrypted_config = encrypt_text(json.dumps(config))
+    execute(
+        database_path,
+        """
+        INSERT INTO organization_integrations (
+            organization_id, provider, status, encrypted_config, created_by_user_id
+        ) VALUES (
+            :organization_id, :provider, 'active', :encrypted_config, :created_by_user_id
+        )
+        ON CONFLICT (organization_id, provider) DO UPDATE SET
+            status = 'active', encrypted_config = :encrypted_config,
+            created_by_user_id = :created_by_user_id, updated_at = CURRENT_TIMESTAMP
+        """,
+        {
+            "organization_id": organization_id,
+            "provider": provider,
+            "encrypted_config": encrypted_config,
+            "created_by_user_id": created_by_user_id,
+        },
+    )
+    return get_workspace_integration(database_path, organization_id, provider) or {}
+
+
+def delete_workspace_integration(database_path: Path, organization_id: int, provider: str) -> None:
+    init_workspace_storage(database_path)
+    execute(
+        database_path,
+        "DELETE FROM organization_integrations WHERE organization_id = :organization_id AND provider = :provider",
+        {"organization_id": organization_id, "provider": provider},
+    )
 
 
 def usage_summary(database_path: Path, organization_id: int) -> dict[str, Any]:
