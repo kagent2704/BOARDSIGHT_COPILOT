@@ -1449,6 +1449,27 @@ body[data-theme="light"] .kpi-card small {
   flex-shrink: 0;
 }
 .button-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.report-export-status {
+  min-height: 22px;
+  margin: -6px 0 12px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: right;
+}
+.report-export-status:empty { display: none; }
+.report-export-status[data-state="success"] { color: var(--success); }
+.report-export-status[data-state="error"] { color: var(--danger); }
+.button-spinner {
+  width: 15px;
+  height: 15px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  display: inline-block;
+  vertical-align: -2px;
+  margin-right: 8px;
+  animation: spin 0.72s linear infinite;
+}
 .panel-title-row .link-btn {
   padding: 8px 12px;
   border-radius: 10px;

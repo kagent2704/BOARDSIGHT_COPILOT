@@ -45,6 +45,8 @@ def test_regenerate_meeting_report_from_record_without_original_output_dir(tmp_p
     assert regenerated is not None
     assert regenerated.exists()
     assert regenerated.name == "structured_report.pdf"
+    assert not (regenerated.parent / "structured_report.docx").exists()
+    assert not (regenerated.parent / "structured_report.xlsx").exists()
 
 
 def test_write_structured_reports_generates_enterprise_sections(tmp_path: Path, sample_pipeline_result) -> None:

@@ -119,6 +119,7 @@ const exportPdfBtn = document.getElementById("exportPdfBtn");
 const exportDocxBtn = document.getElementById("exportDocxBtn");
 const exportXlsxBtn = document.getElementById("exportXlsxBtn");
 const exportTraceBtn = document.getElementById("exportTraceBtn");
+const reportExportStatus = document.getElementById("reportExportStatus");
 const processingOverlay = document.getElementById("processingOverlay");
 const analysisStartInput = document.getElementById("analysisStartInput");
 const analysisEndInput = document.getElementById("analysisEndInput");
@@ -556,10 +557,10 @@ document.querySelectorAll(".tab").forEach((button) => {
   });
 });
 
-exportPdfBtn.addEventListener("click", () => openReport("structured_report.pdf"));
-exportDocxBtn.addEventListener("click", () => openReport("structured_report.docx"));
-exportXlsxBtn.addEventListener("click", () => openReport("structured_report.xlsx"));
-exportTraceBtn.addEventListener("click", () => openReport("structured_report.pdf"));
+exportPdfBtn.addEventListener("click", () => openReport("structured_report.pdf", exportPdfBtn));
+exportDocxBtn.addEventListener("click", () => openReport("structured_report.docx", exportDocxBtn));
+exportXlsxBtn.addEventListener("click", () => openReport("structured_report.xlsx", exportXlsxBtn));
+exportTraceBtn.addEventListener("click", () => openReport("structured_report.pdf", exportTraceBtn));
 openLivePopupBtn?.addEventListener("click", openLiveCopilotPopup);
 notificationsBtn?.addEventListener("click", (event) => {
   event.stopPropagation();
@@ -3703,12 +3704,47 @@ function setView(viewName) {
   syncFloatingLauncher();
 }
 
-function openReport(fileName) {
+async function openReport(fileName, activeButton = null) {
   if (!state.currentMeetingId) return;
-  downloadProtectedFile(
-    `/api/v1/meetings/${encodeURIComponent(state.currentMeeting.storage?.meeting_id || state.currentMeetingId)}/reports/${fileName}`,
-    fileName
-  );
+  const format = String(fileName.split(".").pop() || "report").toUpperCase();
+  setReportExportBusy(true, activeButton, `Preparing ${format}...`);
+  try {
+    await downloadProtectedFile(
+      `/api/v1/meetings/${encodeURIComponent(state.currentMeeting.storage?.meeting_id || state.currentMeetingId)}/reports/${fileName}`,
+      fileName,
+      (progress) => {
+        const detail = progress === null ? "Downloading..." : `Downloading... ${progress}%`;
+        setReportExportMessage(`${format} is ready. ${detail}`);
+      }
+    );
+    setReportExportMessage(`${format} downloaded successfully.`, "success");
+  } catch (error) {
+    setReportExportMessage(error?.message || `Unable to export ${format} right now.`, "error");
+  } finally {
+    setReportExportBusy(false, activeButton);
+  }
+}
+
+function setReportExportMessage(message, stateName = "active") {
+  if (!reportExportStatus) return;
+  reportExportStatus.textContent = message;
+  reportExportStatus.dataset.state = stateName;
+}
+
+function setReportExportBusy(active, activeButton, message = "") {
+  [exportPdfBtn, exportDocxBtn, exportXlsxBtn, exportTraceBtn].forEach((button) => {
+    if (!button) return;
+    if (!button.dataset.idleLabel) button.dataset.idleLabel = button.textContent.trim();
+    button.disabled = active || !state.currentMeetingId;
+    button.classList.toggle("is-disabled", button.disabled);
+    button.setAttribute("aria-busy", active && button === activeButton ? "true" : "false");
+    if (button === activeButton) {
+      button.innerHTML = active
+        ? `<span class="button-spinner" aria-hidden="true"></span><span>Preparing...</span>`
+        : button.dataset.idleLabel;
+    }
+  });
+  if (message) setReportExportMessage(message);
 }
 
 function formatDate(isoString) {
@@ -4176,12 +4212,31 @@ async function apiFetch(url, options = {}) {
   return response;
 }
 
-async function downloadProtectedFile(url, fileName) {
+async function downloadProtectedFile(url, fileName, onProgress = null) {
   const response = await apiFetch(url);
   if (!response.ok) {
-    return;
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(normalizeMessage(payload.detail || payload.error || `Unable to download ${fileName}.`));
   }
-  const blob = await response.blob();
+  const totalBytes = Number(response.headers.get("Content-Length") || 0);
+  let blob;
+  if (response.body && totalBytes > 0) {
+    const reader = response.body.getReader();
+    const chunks = [];
+    let receivedBytes = 0;
+    onProgress?.(0);
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      receivedBytes += value.byteLength;
+      onProgress?.(Math.min(100, Math.round((receivedBytes / totalBytes) * 100)));
+    }
+    blob = new Blob(chunks, { type: response.headers.get("Content-Type") || "application/octet-stream" });
+  } else {
+    onProgress?.(null);
+    blob = await response.blob();
+  }
   const objectUrl = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = objectUrl;

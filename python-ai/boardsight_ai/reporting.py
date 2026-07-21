@@ -1185,3 +1185,28 @@ def write_structured_reports(result: PipelineResult, output_dir: Path) -> dict[s
         files["image_error"] = f"{type(exc).__name__}: {str(exc).splitlines()[0]}"
 
     return files
+
+
+def write_structured_report_artifact(result: PipelineResult, output_dir: Path, file_name: str) -> Path | None:
+    """Generate only the requested export instead of rebuilding the full report bundle."""
+    safe_name = Path(file_name).name
+    output_dir.mkdir(parents=True, exist_ok=True)
+    artifact_path = output_dir / safe_name
+
+    if safe_name == "structured_report.pdf":
+        write_pdf_report(result, artifact_path)
+    elif safe_name == "structured_report.docx":
+        write_docx_report(result, artifact_path)
+    elif safe_name == "structured_report.xlsx":
+        write_excel_report(result, artifact_path)
+    elif safe_name == "transcript.csv":
+        with artifact_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["start", "end", "speaker", "text", "confidence"])
+            for segment in result.transcript.segments:
+                writer.writerow([segment.start, segment.end, segment.speaker, segment.text, segment.confidence])
+    elif safe_name == "summary_card.png":
+        write_summary_image(result, artifact_path)
+    else:
+        return None
+    return artifact_path if artifact_path.exists() else None

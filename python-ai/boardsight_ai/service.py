@@ -99,7 +99,7 @@ from boardsight_ai.storage import (
     save_meeting_result,
     update_meeting_workflow_editor,
 )
-from boardsight_ai.reporting import write_structured_reports
+from boardsight_ai.reporting import write_structured_report_artifact, write_structured_reports
 from boardsight_ai.models import pipeline_result_from_dict
 from boardsight_ai.demo_mode import create_demo_session, ensure_demo_workspace
 from boardsight_ai.workspaces import (
@@ -1471,19 +1471,10 @@ def _regenerate_meeting_report_from_record(record: dict, file_name: str) -> Path
     payload = json.loads(str(record.get("result_json") or "{}"))
     result = pipeline_result_from_dict(payload)
     temp_dir = Path(tempfile.mkdtemp(prefix=f"boardsight-report-{int(record['id'])}-"))
-    report_files = write_structured_reports(result, temp_dir)
-    key_lookup = {
-        "structured_report.pdf": "pdf",
-        "structured_report.docx": "docx",
-        "structured_report.xlsx": "xlsx",
-        "transcript.csv": "excel_ready_csv",
-        "summary_card.png": "image",
-    }
-    report_key = key_lookup[safe_name]
-    resolved = report_files.get(report_key)
-    if not resolved:
+    resolved = write_structured_report_artifact(result, temp_dir, safe_name)
+    if resolved is None:
         return None
-    candidate = Path(str(resolved)).resolve()
+    candidate = resolved.resolve()
     if not candidate.exists():
         return None
     return candidate
