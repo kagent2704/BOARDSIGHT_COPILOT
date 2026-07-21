@@ -58,6 +58,10 @@ def verification_ttl_seconds() -> int:
     return max(300, int(os.getenv("BOARDSIGHT_EMAIL_VERIFICATION_TTL_SECONDS", "86400")))
 
 
+def verification_resend_cooldown_seconds() -> int:
+    return max(30, int(os.getenv("BOARDSIGHT_EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS", "60")))
+
+
 def init_auth_storage(database_path: Path) -> None:
     bool_type = "BOOLEAN" if is_postgres(database_path) else "INTEGER"
     timestamp_type = "TIMESTAMP" if is_postgres(database_path) else "TEXT"
@@ -552,15 +556,30 @@ def issue_email_verification_token(database_path: Path, user_id: int, email: str
     return raw_token
 
 
+def verification_resend_wait_seconds(database_path: Path, user_id: int) -> int:
+    init_auth_storage(database_path)
+    latest = fetchone(
+        database_path,
+        "SELECT created_at FROM email_verification_tokens WHERE user_id = :user_id ORDER BY id DESC LIMIT 1",
+        {"user_id": user_id},
+    )
+    created_at = _parse_timestamp((latest or {}).get("created_at"))
+    if created_at is None:
+        return 0
+    remaining = verification_resend_cooldown_seconds() - int((_utcnow() - created_at).total_seconds())
+    return max(0, remaining)
+
+
 def verify_email_token(database_path: Path, token: str) -> dict[str, Any] | None:
     init_auth_storage(database_path)
     token_hash = hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
     row = fetchone(
         database_path,
         """
-        SELECT id, user_id, email, expires_at, consumed_at
-        FROM email_verification_tokens
-        WHERE token_hash = :token_hash
+        SELECT t.id, t.user_id, t.email, t.expires_at, t.consumed_at
+        FROM email_verification_tokens t
+        JOIN users u ON u.id = t.user_id AND LOWER(u.email) = LOWER(t.email)
+        WHERE t.token_hash = :token_hash
         """,
         {"token_hash": token_hash},
     )

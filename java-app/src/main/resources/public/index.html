@@ -342,11 +342,11 @@
           </div>
         </div>
         <form id="loginForm" class="auth-form">
-          <label id="nameField" class="hidden">Full Name<input type="text" id="displayName" value="Jordan Davis"></label>
-          <label id="usernameField">Username or Email<input type="text" id="username" value="admin" required></label>
-          <label id="emailField" class="hidden">Email<input type="email" id="email" value=""></label>
-          <label>Password<input type="password" id="password" value="boardsight123" required></label>
-          <label id="confirmPasswordField" class="hidden">Confirm Password<input type="password" id="confirmPassword" value=""></label>
+          <label id="nameField" class="hidden">Full Name<input type="text" id="displayName" autocomplete="name" minlength="2" maxlength="80"></label>
+          <label id="usernameField">Username or Email<input type="text" id="username" autocomplete="username" maxlength="254" required></label>
+          <label id="emailField" class="hidden">Email<input type="email" id="email" autocomplete="email" maxlength="254"></label>
+          <label>Password<input type="password" id="password" autocomplete="current-password" required></label>
+          <label id="confirmPasswordField" class="hidden">Confirm Password<input type="password" id="confirmPassword" autocomplete="new-password"></label>
           <label>Role
             <select id="role">
               <option>Executive Observer</option>
@@ -814,7 +814,7 @@
               </div>
               <div class="billing-overview-grid">
                 <div class="billing-usage-card">
-                  <div class="billing-usage-heading"><div><span>Monthly processing allowance</span><strong id="billingRemainingMinutes">—</strong><small>minutes remaining</small></div><span id="billingUsagePercent" class="usage-percent">0%</span></div>
+                  <div class="billing-usage-heading"><div><span>Monthly processing allowance</span><strong id="billingRemainingMinutes">—</strong><small id="billingAllowanceLabel">minutes remaining</small></div><span id="billingUsagePercent" class="usage-percent">0%</span></div>
                   <div class="usage-meter billing-meter"><span id="billingUsageBar"></span></div>
                   <div class="billing-usage-foot"><span id="billingUsedMinutes">0 minutes used</span><span id="billingMinuteLimit">0 minute limit</span></div>
                 </div>

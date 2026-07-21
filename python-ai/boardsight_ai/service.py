@@ -46,6 +46,7 @@ from boardsight_ai.auth import (
     session_ttl_seconds,
     upsert_admin_user,
     verify_email_token,
+    verification_resend_wait_seconds,
 )
 from boardsight_ai.agent_storage import (
     create_agent_execution_run,
@@ -59,6 +60,7 @@ from boardsight_ai.data_protection import data_encryption_enabled, data_encrypti
 from boardsight_ai.emailer import send_verification_email
 from boardsight_ai.gitlab_execution import build_gitlab_execution_plan, normalize_gitlab_plan_source, sync_plan_to_gitlab
 from boardsight_ai.gitlab_storage import init_gitlab_storage, protect_gitlab_storage, save_gitlab_sync
+from boardsight_ai.identity_validation import normalize_registration_email, normalize_registration_username, validate_registration_display_name
 from boardsight_ai.providers.speech import _faster_whisper_model
 from boardsight_ai.providers.vision import analyze_sparse_frame
 from boardsight_ai.retention import cleanup_expired_data
@@ -623,17 +625,22 @@ def reset_demo_session() -> dict:
 @app.post("/api/v1/auth/register")
 async def register(request: Request, background_tasks: BackgroundTasks, payload: dict | None = None) -> dict:
     request_payload = await _collect_request_payload(request, payload)
-    username = str(request_payload.get("username", "")).strip()
-    email = str(request_payload.get("email", "")).strip().lower()
-    password = str(request_payload.get("password", "")).strip()
-    confirm_password = str(request_payload.get("confirm_password", "")).strip()
+    raw_username = str(request_payload.get("username", ""))
+    raw_email = str(request_payload.get("email", ""))
+    password = str(request_payload.get("password", ""))
+    confirm_password = str(request_payload.get("confirm_password", ""))
     requested_role = str(request_payload.get("role", "analyst")).strip().lower().replace(" ", "_") or "analyst"
     role = requested_role if requested_role in {"analyst", "executive_observer", "board_member"} else "analyst"
-    display_name = str(request_payload.get("display_name", username)).strip() or username
-    if not username or not email or not password or not confirm_password:
+    if not raw_username.strip() or not raw_email.strip() or not password or not confirm_password:
         raise HTTPException(status_code=400, detail="Username, email, password, and confirmation are required.")
     if confirm_password != password:
         raise HTTPException(status_code=400, detail="Password confirmation does not match.")
+    try:
+        username = normalize_registration_username(raw_username)
+        email = normalize_registration_email(raw_email)
+        display_name = validate_registration_display_name(str(request_payload.get("display_name", username)))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     created = create_user(
         AUTH_DB_PATH,
         username,
@@ -711,6 +718,13 @@ async def resend_verification(request: Request, background_tasks: BackgroundTask
         raise HTTPException(status_code=404, detail="Account not found.")
     if bool(user.get("email_verified")):
         return {"status": "already_verified", "email": user["email"]}
+    wait_seconds = verification_resend_wait_seconds(AUTH_DB_PATH, int(user["id"]))
+    if wait_seconds > 0:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Please wait {wait_seconds} seconds before requesting another verification email.",
+            headers={"Retry-After": str(wait_seconds)},
+        )
     raw_token = issue_email_verification_token(AUTH_DB_PATH, int(user["id"]), str(user["email"]))
     verification_url = f"{_verification_base_url(request)}/api/v1/auth/verify-email?token={raw_token}"
     email_delivery = _email_delivery_status()
@@ -795,6 +809,9 @@ def _workspace_payload(workspace: dict) -> dict:
         "license_status": workspace.get("license_status"),
         "plan_code": workspace.get("plan_code"),
         "subscription_status": workspace.get("subscription_status"),
+        "billing_mode": workspace.get("billing_mode") or "customer",
+        "is_sponsored": bool(workspace.get("user_sponsorship_id")) or str(workspace.get("billing_mode") or "") == "internal_sponsored",
+        "sponsorship_type": workspace.get("user_sponsorship_type"),
         "usage": usage_summary(MEETING_DB_PATH, organization_id),
     }
 

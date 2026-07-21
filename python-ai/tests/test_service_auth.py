@@ -48,6 +48,38 @@ def test_register_returns_verification_pending_without_blocking_delivery(tmp_pat
     assert delivery_calls
     assert delivery_calls[0]["to_email"] == "newgovernanceuser@example.com"
 
+    cooldown_response = client.post("/api/v1/auth/resend-verification", json={"identifier": "newgovernanceuser"})
+    assert cooldown_response.status_code == 429
+    assert int(cooldown_response.headers["retry-after"]) > 0
+
+
+def test_register_rejects_invalid_or_reserved_identity_values(tmp_path, monkeypatch) -> None:
+    auth_db = tmp_path / "auth.db"
+    meeting_db = tmp_path / "meetings.db"
+    monkeypatch.setattr("boardsight_ai.service.AUTH_DB_PATH", auth_db)
+    monkeypatch.setattr("boardsight_ai.service.MEETING_DB_PATH", meeting_db)
+    client = TestClient(app)
+
+    invalid_username = client.post("/api/v1/auth/register", json={
+        "username": "admin",
+        "email": "valid.person@gmail.com",
+        "password": "super-secret",
+        "confirm_password": "super-secret",
+        "display_name": "Valid Person",
+    })
+    invalid_email = client.post("/api/v1/auth/register", json={
+        "username": "valid.person",
+        "email": "person@localhost",
+        "password": "super-secret",
+        "confirm_password": "super-secret",
+        "display_name": "Valid Person",
+    })
+
+    assert invalid_username.status_code == 400
+    assert "reserved" in invalid_username.json()["detail"].lower()
+    assert invalid_email.status_code == 400
+    assert "public email domain" in invalid_email.json()["detail"].lower()
+
 
 def test_verify_email_renders_html_for_browser_requests(tmp_path, monkeypatch) -> None:
     auth_db = tmp_path / "auth.db"

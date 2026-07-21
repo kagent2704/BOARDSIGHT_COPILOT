@@ -184,6 +184,7 @@ const workspaceInviteResult = document.getElementById("workspaceInviteResult");
 const workspaceMemberList = document.getElementById("workspaceMemberList");
 const billingCurrentPlanBadge = document.getElementById("billingCurrentPlanBadge");
 const billingRemainingMinutes = document.getElementById("billingRemainingMinutes");
+const billingAllowanceLabel = document.getElementById("billingAllowanceLabel");
 const billingUsagePercent = document.getElementById("billingUsagePercent");
 const billingUsageBar = document.getElementById("billingUsageBar");
 const billingUsedMinutes = document.getElementById("billingUsedMinutes");
@@ -932,15 +933,17 @@ function renderWorkspaceUsage(current) {
   const remaining = Number(usage.remaining_minutes ?? Math.max(0, limit - used));
   const percent = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
   const planName = prettifyRole(current.plan_code || "personal");
-  if (sidebarUsageValue) sidebarUsageValue.textContent = `${formatCompactNumber(remaining)} / ${formatCompactNumber(limit)} left`;
-  if (sidebarUsageBar) sidebarUsageBar.style.width = `${percent}%`;
-  if (sidebarPlanBadge) sidebarPlanBadge.textContent = planName;
-  if (billingCurrentPlanBadge) billingCurrentPlanBadge.textContent = `${planName} · ${prettifyRole(current.subscription_status || "active")}`;
-  if (billingRemainingMinutes) billingRemainingMinutes.textContent = formatCompactNumber(remaining);
-  if (billingUsagePercent) billingUsagePercent.textContent = `${percent}% used`;
-  if (billingUsageBar) billingUsageBar.style.width = `${percent}%`;
+  const isSponsored = Boolean(current.is_sponsored || usage.is_sponsored);
+  if (sidebarUsageValue) sidebarUsageValue.textContent = isSponsored ? `${formatCompactNumber(used)} min tracked` : `${formatCompactNumber(remaining)} / ${formatCompactNumber(limit)} left`;
+  if (sidebarUsageBar) sidebarUsageBar.style.width = isSponsored ? "100%" : `${percent}%`;
+  if (sidebarPlanBadge) sidebarPlanBadge.textContent = isSponsored ? "Sponsored" : planName;
+  if (billingCurrentPlanBadge) billingCurrentPlanBadge.textContent = isSponsored ? "Founder sponsored · Forever free" : `${planName} · ${prettifyRole(current.subscription_status || "active")}`;
+  if (billingRemainingMinutes) billingRemainingMinutes.textContent = isSponsored ? formatCompactNumber(used) : formatCompactNumber(remaining);
+  if (billingAllowanceLabel) billingAllowanceLabel.textContent = isSponsored ? "minutes tracked, never charged" : "minutes remaining";
+  if (billingUsagePercent) billingUsagePercent.textContent = isSponsored ? "No charge" : `${percent}% used`;
+  if (billingUsageBar) billingUsageBar.style.width = isSponsored ? "100%" : `${percent}%`;
   if (billingUsedMinutes) billingUsedMinutes.textContent = `${formatCompactNumber(used)} minutes used`;
-  if (billingMinuteLimit) billingMinuteLimit.textContent = `${formatCompactNumber(limit)} minute limit`;
+  if (billingMinuteLimit) billingMinuteLimit.textContent = isSponsored ? "Permanent sponsored access" : `${formatCompactNumber(limit)} minute limit`;
   if (billingSeatUsage) billingSeatUsage.textContent = `${Number(usage.active_licenses || 0)} / ${Number(usage.licensed_member_limit || 0)}`;
   renderBillingView();
 }
@@ -957,6 +960,7 @@ function renderBillingView() {
   if (!pricingPlanGrid || !state.pricingPlans.length) return;
   const current = state.workspaces.find((workspace) => String(workspace.id) === String(state.currentWorkspaceId));
   const currentPlan = String(current?.plan_code || "personal");
+  const isSponsored = Boolean(current?.is_sponsored || current?.usage?.is_sponsored);
   const canManage = ["owner", "admin"].includes(String(current?.role || "").toLowerCase());
   pricingPlanGrid.innerHTML = state.pricingPlans.map((plan) => {
     const isCurrent = plan.plan_code === currentPlan;
@@ -965,14 +969,14 @@ function renderBillingView() {
     const price = annual ? plan.annual_price_inr : plan.monthly_price_inr;
     const priceLabel = price == null ? "Let's talk" : `₹${Number(price).toLocaleString("en-IN")}`;
     const suffix = price == null ? "" : annual ? "/ year" : "/ month";
-    const actionLabel = isCurrent ? "Current plan" : plan.plan_code === "custom" ? "Request custom plan" : `Request ${plan.name}`;
+    const actionLabel = isSponsored ? "Included with sponsored access" : isCurrent ? "Current plan" : plan.plan_code === "custom" ? "Request custom plan" : `Request ${plan.name}`;
     const memberLabel = plan.plan_code === "custom" ? "Contracted licensed members" : `<strong>${Number(plan.licensed_members).toLocaleString("en-IN")}</strong> licensed ${Number(plan.licensed_members) === 1 ? "member" : "members"}`;
     const minuteLabel = plan.plan_code === "custom" ? "Contracted pooled usage" : `<strong>${Number(plan.monthly_minutes).toLocaleString("en-IN")}</strong> pooled minutes/month`;
     return `<article class="pricing-card${featured ? " featured" : ""}${isCurrent ? " current" : ""}">
       ${featured ? '<span class="popular-plan-label">Best for teams</span>' : ""}
       <div class="pricing-card-head"><div><span>${escapeHtml(plan.name)}</span><strong>${priceLabel}<small>${suffix}</small></strong></div>${isCurrent ? '<span class="current-dot">Current</span>' : ""}</div>
       <ul><li>${memberLabel}</li><li>${minuteLabel}</li><li><strong>${Number(plan.retention_days)}</strong>-day meeting retention</li><li>Free viewer members</li></ul>
-      <button type="button" class="${featured && !isCurrent ? "primary-btn" : "ghost-btn"}" data-request-plan="${escapeHtml(plan.plan_code)}" ${isCurrent || !canManage ? "disabled" : ""}>${escapeHtml(actionLabel)}</button>
+      <button type="button" class="${featured && !isCurrent && !isSponsored ? "primary-btn" : "ghost-btn"}" data-request-plan="${escapeHtml(plan.plan_code)}" ${isSponsored || isCurrent || !canManage ? "disabled" : ""}>${escapeHtml(actionLabel)}</button>
     </article>`;
   }).join("");
 }

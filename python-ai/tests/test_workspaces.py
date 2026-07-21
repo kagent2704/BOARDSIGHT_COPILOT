@@ -4,15 +4,17 @@ import pytest
 from fastapi.testclient import TestClient
 
 from boardsight_ai.auth import authenticate_user, create_user
-from boardsight_ai.database import fetchone
+from boardsight_ai.database import execute, fetchall, fetchone
 from boardsight_ai.storage import get_meeting_result, init_storage, list_meeting_results, save_meeting_result
 from boardsight_ai.workspaces import (
     accept_invitation,
+    assert_workspace_access,
     commit_minutes,
     create_invitation,
     create_workspace,
     ensure_personal_workspace,
     get_workspace_for_user,
+    init_workspace_storage,
     release_minutes,
     request_subscription_change,
     reserve_minutes,
@@ -39,6 +41,34 @@ def test_personal_workspace_backfills_existing_user_content(tmp_path, sample_pip
     assert stored is not None
     assert stored["organization_id"] == workspace["id"]
     assert stored["created_by_user_id"] == 7
+
+
+def test_permanent_sponsorship_exists_before_registration_and_bypasses_customer_charging(tmp_path) -> None:
+    db_path = tmp_path / "sponsorship.db"
+    init_workspace_storage(db_path)
+    sponsorships = fetchall(db_path, "SELECT email FROM billing_sponsorships")
+    unregistered = fetchone(db_path, "SELECT * FROM billing_sponsorships WHERE email = :email", {"email": "kashmiraspatil@gmail.com"})
+
+    user = _user(41, "kashmiraspatil@gmail.com", "Kashmira")
+    workspace = ensure_personal_workspace(db_path, user)
+    execute(db_path, "UPDATE subscriptions SET status = 'past_due' WHERE organization_id = :organization_id", {"organization_id": workspace["id"]})
+    sponsored_workspace = get_workspace_for_user(db_path, int(workspace["id"]), 41)
+    assert sponsored_workspace is not None
+    assert_workspace_access(sponsored_workspace, require_license=True)
+    usage = reserve_minutes(db_path, int(workspace["id"]), 41, 500, usage_type="recorded_analysis", event_key="founder-load-test")
+
+    assert {row["email"] for row in sponsorships} == {
+        "kashmiraspatil@gmail.com",
+        "umeshgirase19@gmail.com",
+        "umeshgirase852@gmail.com",
+        "kashmirasanjaypatil@gmail.com",
+        "patilkashmirasanjay@gmail.com",
+    }
+    assert unregistered is not None and unregistered["user_id"] is None
+    assert sponsored_workspace["billing_mode"] == "internal_sponsored"
+    assert sponsored_workspace["user_sponsorship_type"] == "founder"
+    assert usage["billing_disposition"] == "internally_sponsored"
+    assert usage["sponsorship_id"] == sponsored_workspace["user_sponsorship_id"]
 
 
 def test_workspace_members_share_organization_scoped_meetings(tmp_path, sample_pipeline_result) -> None:

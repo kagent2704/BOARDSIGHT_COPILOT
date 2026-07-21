@@ -8,7 +8,7 @@ from typing import Any
 
 from sqlalchemy import text
 
-from boardsight_ai.database import execute, fetchall, fetchone, get_engine, insert_and_return_id, is_postgres
+from boardsight_ai.database import execute, fetchall, fetchone, get_engine, insert_and_return_id, is_postgres, table_columns
 
 
 PLAN_ENTITLEMENTS: dict[str, dict[str, int]] = {
@@ -27,6 +27,13 @@ PLAN_PRICING: dict[str, dict[str, Any]] = {
 
 WORKSPACE_ROLES = {"owner", "admin", "member", "viewer"}
 LICENSED_ROLES = {"owner", "admin", "member"}
+PERMANENT_SPONSORED_EMAILS = {
+    "kashmiraspatil@gmail.com",
+    "umeshgirase19@gmail.com",
+    "umeshgirase852@gmail.com",
+    "kashmirasanjaypatil@gmail.com",
+    "patilkashmirasanjay@gmail.com",
+}
 
 
 def _utcnow() -> datetime:
@@ -117,6 +124,22 @@ def init_workspace_storage(database_path: Path) -> None:
     execute(
         database_path,
         f"""
+        CREATE TABLE IF NOT EXISTS billing_sponsorships (
+            id {id_type},
+            email TEXT NOT NULL UNIQUE,
+            user_id {user_id_type},
+            sponsorship_type TEXT NOT NULL DEFAULT 'founder',
+            status TEXT NOT NULL DEFAULT 'active',
+            is_permanent {bool_type} NOT NULL DEFAULT {true_value},
+            reason TEXT NOT NULL,
+            created_at {timestamp_type} DEFAULT CURRENT_TIMESTAMP,
+            updated_at {timestamp_type} DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+    )
+    execute(
+        database_path,
+        f"""
         CREATE TABLE IF NOT EXISTS subscriptions (
             id {id_type},
             organization_id {user_id_type} NOT NULL UNIQUE,
@@ -129,6 +152,8 @@ def init_workspace_storage(database_path: Path) -> None:
             provider TEXT,
             provider_customer_id TEXT,
             provider_subscription_id TEXT,
+            billing_mode TEXT NOT NULL DEFAULT 'customer',
+            sponsorship_id {user_id_type},
             updated_at {timestamp_type} DEFAULT CURRENT_TIMESTAMP,
             created_at {timestamp_type} DEFAULT CURRENT_TIMESTAMP
         )
@@ -181,6 +206,8 @@ def init_workspace_storage(database_path: Path) -> None:
             reserved_minutes DOUBLE PRECISION NOT NULL DEFAULT 0,
             status TEXT NOT NULL DEFAULT 'reserved',
             metadata_json TEXT NOT NULL DEFAULT '{{}}',
+            billing_disposition TEXT NOT NULL DEFAULT 'customer_billable',
+            sponsorship_id {user_id_type},
             created_at {timestamp_type} DEFAULT CURRENT_TIMESTAMP,
             committed_at {timestamp_type}
         )
@@ -189,6 +216,30 @@ def init_workspace_storage(database_path: Path) -> None:
     execute(database_path, "CREATE INDEX IF NOT EXISTS idx_org_members_user ON organization_members(user_id)")
     execute(database_path, "CREATE INDEX IF NOT EXISTS idx_usage_org_created ON usage_events(organization_id, created_at)")
     execute(database_path, "CREATE INDEX IF NOT EXISTS idx_subscription_requests_org ON subscription_change_requests(organization_id, created_at)")
+    execute(database_path, "CREATE INDEX IF NOT EXISTS idx_billing_sponsorships_user ON billing_sponsorships(user_id)")
+
+    subscription_columns = table_columns(database_path, "subscriptions")
+    if "billing_mode" not in subscription_columns:
+        execute(database_path, "ALTER TABLE subscriptions ADD COLUMN billing_mode TEXT NOT NULL DEFAULT 'customer'")
+    if "sponsorship_id" not in subscription_columns:
+        execute(database_path, f"ALTER TABLE subscriptions ADD COLUMN sponsorship_id {user_id_type}")
+    usage_columns = table_columns(database_path, "usage_events")
+    if "billing_disposition" not in usage_columns:
+        execute(database_path, "ALTER TABLE usage_events ADD COLUMN billing_disposition TEXT NOT NULL DEFAULT 'customer_billable'")
+    if "sponsorship_id" not in usage_columns:
+        execute(database_path, f"ALTER TABLE usage_events ADD COLUMN sponsorship_id {user_id_type}")
+
+    for sponsored_email in sorted(PERMANENT_SPONSORED_EMAILS):
+        sponsorship = fetchone(database_path, "SELECT id FROM billing_sponsorships WHERE email = :email", {"email": sponsored_email})
+        if sponsorship is None:
+            execute(
+                database_path,
+                """
+                INSERT INTO billing_sponsorships (email, sponsorship_type, status, is_permanent, reason)
+                VALUES (:email, 'founder', 'active', :is_permanent, 'Permanent BoardSight operator access')
+                """,
+                {"email": sponsored_email, "is_permanent": True},
+            )
 
     for plan_code, entitlements in PLAN_ENTITLEMENTS.items():
         existing = fetchone(database_path, "SELECT plan_code FROM plan_entitlements WHERE plan_code = :plan_code", {"plan_code": plan_code})
@@ -233,6 +284,47 @@ def plan_catalog() -> list[dict[str, Any]]:
     ]
 
 
+def get_active_sponsorship_for_email(database_path: Path, email: str) -> dict[str, Any] | None:
+    init_workspace_storage(database_path)
+    normalized_email = str(email or "").strip().lower()
+    if not normalized_email:
+        return None
+    return fetchone(
+        database_path,
+        "SELECT * FROM billing_sponsorships WHERE email = :email AND status = 'active'",
+        {"email": normalized_email},
+    )
+
+
+def apply_sponsorship_for_user(database_path: Path, user: dict[str, Any], organization_id: int | None = None) -> dict[str, Any] | None:
+    sponsorship = get_active_sponsorship_for_email(database_path, str(user.get("email") or ""))
+    if sponsorship is None:
+        return None
+    user_id = int(user["user_id"])
+    sponsorship_id = int(sponsorship["id"])
+    linked_user_id = sponsorship.get("user_id")
+    if linked_user_id is not None and int(linked_user_id) != user_id:
+        raise PermissionError("This sponsored email is already linked to another BoardSight account.")
+    execute(
+        database_path,
+        "UPDATE billing_sponsorships SET user_id = :user_id, updated_at = CURRENT_TIMESTAMP WHERE id = :sponsorship_id",
+        {"user_id": user_id, "sponsorship_id": sponsorship_id},
+    )
+    if organization_id is not None:
+        execute(
+            database_path,
+            """
+            UPDATE subscriptions
+            SET billing_mode = 'internal_sponsored', sponsorship_id = :sponsorship_id,
+                status = 'active', provider = NULL, provider_customer_id = NULL,
+                provider_subscription_id = NULL, updated_at = CURRENT_TIMESTAMP
+            WHERE organization_id = :organization_id
+            """,
+            {"sponsorship_id": sponsorship_id, "organization_id": organization_id},
+        )
+    return fetchone(database_path, "SELECT * FROM billing_sponsorships WHERE id = :id", {"id": sponsorship_id})
+
+
 def ensure_personal_workspace(database_path: Path, user: dict[str, Any]) -> dict[str, Any]:
     init_workspace_storage(database_path)
     user_id = int(user["user_id"])
@@ -249,7 +341,8 @@ def ensure_personal_workspace(database_path: Path, user: dict[str, Any]) -> dict
         {"user_id": user_id},
     )
     if existing is not None:
-        return existing
+        apply_sponsorship_for_user(database_path, user, int(existing["id"]))
+        return get_workspace_for_user(database_path, int(existing["id"]), user_id) or existing
 
     display_name = str(user.get("display_name") or user.get("username") or "BoardSight User").strip()
     organization_id = insert_and_return_id(
@@ -281,6 +374,7 @@ def ensure_personal_workspace(database_path: Path, user: dict[str, Any]) -> dict
         """,
         {"organization_id": organization_id, "period_start": _cycle_start()},
     )
+    apply_sponsorship_for_user(database_path, user, organization_id)
     _backfill_user_content(database_path, user_id, organization_id)
     return get_workspace_for_user(database_path, organization_id, user_id) or {}
 
@@ -304,10 +398,12 @@ def list_workspaces_for_user(database_path: Path, user_id: int) -> list[dict[str
         database_path,
         """
         SELECT o.*, m.role AS membership_role, m.license_status,
-               s.plan_code, s.status AS subscription_status
+               s.plan_code, s.status AS subscription_status, s.billing_mode, s.sponsorship_id,
+               bs.id AS user_sponsorship_id, bs.sponsorship_type AS user_sponsorship_type
         FROM organization_members m
         JOIN organizations o ON o.id = m.organization_id
         LEFT JOIN subscriptions s ON s.organization_id = o.id
+        LEFT JOIN billing_sponsorships bs ON bs.user_id = m.user_id AND bs.status = 'active'
         WHERE m.user_id = :user_id AND o.status = 'active'
         ORDER BY o.is_personal DESC, o.name
         """,
@@ -322,6 +418,8 @@ def get_workspace_for_user(database_path: Path, organization_id: int, user_id: i
         """
         SELECT o.*, m.role AS membership_role, m.license_status,
                s.plan_code, s.status AS subscription_status,
+               s.billing_mode, s.sponsorship_id,
+               bs.id AS user_sponsorship_id, bs.sponsorship_type AS user_sponsorship_type,
                COALESCE(s.licensed_member_limit, p.licensed_members) AS licensed_member_limit,
                COALESCE(s.monthly_minute_limit, p.monthly_minutes) AS monthly_minute_limit,
                p.retention_days
@@ -329,6 +427,7 @@ def get_workspace_for_user(database_path: Path, organization_id: int, user_id: i
         JOIN organizations o ON o.id = m.organization_id
         LEFT JOIN subscriptions s ON s.organization_id = o.id
         LEFT JOIN plan_entitlements p ON p.plan_code = s.plan_code
+        LEFT JOIN billing_sponsorships bs ON bs.user_id = m.user_id AND bs.status = 'active'
         WHERE o.id = :organization_id AND m.user_id = :user_id AND o.status = 'active'
         """,
         {"organization_id": organization_id, "user_id": user_id},
@@ -347,6 +446,13 @@ def create_workspace(database_path: Path, name: str, owner_user_id: int) -> dict
     )
     execute(database_path, "INSERT INTO organization_members (organization_id, user_id, role, license_status) VALUES (:organization_id, :user_id, 'owner', 'active')", {"organization_id": organization_id, "user_id": owner_user_id})
     execute(database_path, "INSERT INTO subscriptions (organization_id, plan_code, status, current_period_start) VALUES (:organization_id, 'starter', 'trialing', :period_start)", {"organization_id": organization_id, "period_start": _cycle_start()})
+    sponsorship = fetchone(database_path, "SELECT id FROM billing_sponsorships WHERE user_id = :user_id AND status = 'active'", {"user_id": owner_user_id})
+    if sponsorship is not None:
+        execute(
+            database_path,
+            "UPDATE subscriptions SET billing_mode = 'internal_sponsored', sponsorship_id = :sponsorship_id, status = 'active' WHERE organization_id = :organization_id",
+            {"sponsorship_id": sponsorship["id"], "organization_id": organization_id},
+        )
     return get_workspace_for_user(database_path, organization_id, owner_user_id) or {}
 
 
@@ -427,7 +533,8 @@ def assert_workspace_access(workspace: dict[str, Any], *, require_admin: bool = 
         raise PermissionError("Workspace owner or admin access is required.")
     if require_license and (role not in LICENSED_ROLES or str(workspace.get("license_status") or "").lower() != "active"):
         raise PermissionError("An active workspace license is required.")
-    if require_license and str(workspace.get("subscription_status") or "").lower() not in {"active", "trialing"}:
+    is_sponsored = bool(workspace.get("user_sponsorship_id")) or str(workspace.get("billing_mode") or "").lower() == "internal_sponsored"
+    if require_license and not is_sponsored and str(workspace.get("subscription_status") or "").lower() not in {"active", "trialing"}:
         raise PermissionError("The workspace subscription is not active.")
 
 
@@ -435,19 +542,25 @@ def usage_summary(database_path: Path, organization_id: int) -> dict[str, Any]:
     workspace_subscription = fetchone(
         database_path,
         """
-        SELECT s.plan_code, s.status,
+        SELECT s.plan_code, s.status, s.billing_mode, s.sponsorship_id,
                COALESCE(s.monthly_minute_limit, p.monthly_minutes) AS monthly_minute_limit,
                COALESCE(s.licensed_member_limit, p.licensed_members) AS licensed_member_limit
         FROM subscriptions s JOIN plan_entitlements p ON p.plan_code = s.plan_code
         WHERE s.organization_id = :organization_id
         """,
         {"organization_id": organization_id},
-    ) or {"plan_code": "personal", "status": "inactive", "monthly_minute_limit": 0, "licensed_member_limit": 0}
+    ) or {"plan_code": "personal", "status": "inactive", "billing_mode": "customer", "sponsorship_id": None, "monthly_minute_limit": 0, "licensed_member_limit": 0}
     usage = fetchone(database_path, "SELECT COALESCE(SUM(CASE WHEN status = 'committed' THEN quantity_minutes ELSE reserved_minutes END), 0) AS used_minutes FROM usage_events WHERE organization_id = :organization_id AND status IN ('reserved','committed') AND created_at >= :cycle_start", {"organization_id": organization_id, "cycle_start": _cycle_start()}) or {"used_minutes": 0}
     licenses = fetchone(database_path, "SELECT COUNT(*) AS count FROM organization_members WHERE organization_id = :organization_id AND license_status = 'active' AND role IN ('owner','admin','member')", {"organization_id": organization_id}) or {"count": 0}
     limit = float(workspace_subscription.get("monthly_minute_limit") or 0)
     used = float(usage.get("used_minutes") or 0)
-    return {**workspace_subscription, "used_minutes": round(used, 2), "remaining_minutes": round(max(0.0, limit - used), 2), "active_licenses": int(licenses.get("count") or 0)}
+    return {
+        **workspace_subscription,
+        "is_sponsored": str(workspace_subscription.get("billing_mode") or "") == "internal_sponsored",
+        "used_minutes": round(used, 2),
+        "remaining_minutes": round(max(0.0, limit - used), 2),
+        "active_licenses": int(licenses.get("count") or 0),
+    }
 
 
 def reserve_minutes(database_path: Path, organization_id: int, user_id: int, minutes: float, *, usage_type: str, event_key: str | None = None, metadata_json: str = "{}") -> dict[str, Any]:
@@ -461,23 +574,41 @@ def reserve_minutes(database_path: Path, organization_id: int, user_id: int, min
         if existing is not None:
             return dict(existing)
         entitlement = connection.execute(text("""
-            SELECT s.status, COALESCE(s.monthly_minute_limit, p.monthly_minutes) AS monthly_minute_limit
+            SELECT s.status, COALESCE(s.monthly_minute_limit, p.monthly_minutes) AS monthly_minute_limit,
+                   bs.id AS sponsorship_id
             FROM subscriptions s JOIN plan_entitlements p ON p.plan_code = s.plan_code
+            LEFT JOIN billing_sponsorships bs ON bs.user_id = :user_id AND bs.status = 'active'
             WHERE s.organization_id = :organization_id
-        """), {"organization_id": organization_id}).mappings().first()
-        if entitlement is None or str(entitlement["status"]) not in {"active", "trialing"}:
+        """), {"organization_id": organization_id, "user_id": user_id}).mappings().first()
+        sponsorship_id = int(entitlement["sponsorship_id"]) if entitlement is not None and entitlement.get("sponsorship_id") is not None else None
+        if entitlement is None or (sponsorship_id is None and str(entitlement["status"]) not in {"active", "trialing"}):
             raise PermissionError("The workspace subscription is not active.")
         used = connection.execute(text("SELECT COALESCE(SUM(CASE WHEN status = 'committed' THEN quantity_minutes ELSE reserved_minutes END), 0) AS used FROM usage_events WHERE organization_id = :organization_id AND status IN ('reserved','committed') AND created_at >= :cycle_start"), {"organization_id": organization_id, "cycle_start": _cycle_start()}).mappings().first()
         remaining = float(entitlement["monthly_minute_limit"] or 0) - float((used or {}).get("used") or 0)
-        if requested > remaining:
+        if sponsorship_id is None and requested > remaining:
             raise OverflowError(f"Workspace has {max(0.0, remaining):.1f} processing minutes remaining.")
         statement = """
-            INSERT INTO usage_events (event_key, organization_id, user_id, usage_type, reserved_minutes, status, metadata_json)
-            VALUES (:event_key, :organization_id, :user_id, :usage_type, :reserved_minutes, 'reserved', :metadata_json)
+            INSERT INTO usage_events (
+                event_key, organization_id, user_id, usage_type, reserved_minutes, status, metadata_json,
+                billing_disposition, sponsorship_id
+            )
+            VALUES (
+                :event_key, :organization_id, :user_id, :usage_type, :reserved_minutes, 'reserved', :metadata_json,
+                :billing_disposition, :sponsorship_id
+            )
         """
         if engine.dialect.name.startswith("postgres"):
             statement += " RETURNING id"
-        result = connection.execute(text(statement), {"event_key": key, "organization_id": organization_id, "user_id": user_id, "usage_type": usage_type, "reserved_minutes": requested, "metadata_json": metadata_json})
+        result = connection.execute(text(statement), {
+            "event_key": key,
+            "organization_id": organization_id,
+            "user_id": user_id,
+            "usage_type": usage_type,
+            "reserved_minutes": requested,
+            "metadata_json": metadata_json,
+            "billing_disposition": "internally_sponsored" if sponsorship_id is not None else "customer_billable",
+            "sponsorship_id": sponsorship_id,
+        })
         usage_id = int(result.scalar_one() if engine.dialect.name.startswith("postgres") else result.lastrowid)
     return fetchone(database_path, "SELECT * FROM usage_events WHERE id = :id", {"id": usage_id}) or {}
 
