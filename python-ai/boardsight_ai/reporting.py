@@ -107,6 +107,24 @@ class ReportVisualRow:
 
 
 @dataclass
+class ReportCopilotInsight:
+    category: str
+    insight: str
+    evidence: str
+    recommended_action: str
+    confidence: float
+
+
+@dataclass
+class ReportVisualizationRow:
+    visualization: str
+    label: str
+    value: float
+    unit: str
+    bar: str
+
+
+@dataclass
 class ReportTraceRow:
     trace_id: str
     title: str
@@ -122,6 +140,9 @@ class StructuredReportModel:
     report_title: str
     generated_at: str
     executive_summary: list[str]
+    copilot_summary: list[str]
+    copilot_insights: list[ReportCopilotInsight]
+    visualizations: list[ReportVisualizationRow]
     metadata_rows: list[tuple[str, str]]
     decisions: list[ReportDecisionRow]
     actions: list[ReportActionRow]
@@ -212,6 +233,12 @@ def _derive_title_from_text(text: str, fallback: str) -> str:
 
 def _format_ratio(value: float) -> str:
     return f"{value:.1f}%"
+
+
+def _data_bar(value: float, maximum: float, width: int = 12) -> str:
+    ratio = 0.0 if maximum <= 0 else max(0.0, min(1.0, value / maximum))
+    filled = round(ratio * width)
+    return "#" * filled + "." * (width - filled)
 
 
 def _infer_action_status(owner: str, due_date: str, blocker_flag: str, linked_issue: str) -> str:
@@ -486,6 +513,59 @@ def build_structured_report_model(result: PipelineResult) -> StructuredReportMod
         _safe_text(result.meeting_scores.meeting_conclusion, default="No executive conclusion was generated."),
     ]
 
+    top_signal = _safe_text(workflow.workflow_summary.get("top_priority_decision"), default="No high-priority workflow signal was identified.")
+    copilot_summary = [
+        _safe_text(result.meeting_scores.meeting_conclusion, default="The Copilot did not generate a meeting conclusion."),
+        f"The Copilot captured {len(decisions)} decisions, {len(action_rows)} actions, and {len(risks)} blocker or risk signals.",
+        f"Execution focus: {top_signal}",
+    ]
+    copilot_insights: list[ReportCopilotInsight] = [
+        ReportCopilotInsight(
+            category="Decision intelligence",
+            insight=f"{len(decisions)} decision moments were converted into an auditable decision register.",
+            evidence=_render_list([item.decision_id for item in decisions], default="No decision IDs available"),
+            recommended_action=decisions[0].next_action if decisions else "Confirm whether any decision requires follow-through.",
+            confidence=max([item.confidence for item in decisions], default=0.0),
+        ),
+        ReportCopilotInsight(
+            category="Execution readiness",
+            insight=f"Execution readiness is {result.meeting_scores.execution_readiness:.2f}, with {len(action_rows)} operational actions identified.",
+            evidence=_render_list([item.task_title for item in action_rows[:3]], default="No action evidence available"),
+            recommended_action="Confirm each action owner, due date, and downstream delivery system.",
+            confidence=min(1.0, max(0.0, _safe_float(result.meeting_scores.execution_readiness))),
+        ),
+        ReportCopilotInsight(
+            category="Risk and accountability",
+            insight=f"{len(risks)} open risk or follow-through gaps require governance attention.",
+            evidence=_render_list([item.description for item in risks[:3]], default="No open risk evidence available"),
+            recommended_action=risks[0].recommended_follow_up if risks else "Maintain the decision register as the audit trail.",
+            confidence=0.9 if risks else 0.75,
+        ),
+        ReportCopilotInsight(
+            category="Visual corroboration",
+            insight=f"{len(visual_rows)} visual evidence windows were aligned to the meeting narrative.",
+            evidence=_render_list([item.insight for item in visual_rows[:3]], default="No visual corroboration was available"),
+            recommended_action="Review evidence windows supporting presentation-dependent decisions." if visual_rows else "Consider enabling visual analysis for presentation-heavy meetings.",
+            confidence=max([item.confidence for item in visual_rows], default=0.0),
+        ),
+    ]
+
+    visualizations: list[ReportVisualizationRow] = []
+    max_participation = max([item.dominance_ratio for item in participation_rows], default=100.0)
+    for item in participation_rows:
+        visualizations.append(
+            ReportVisualizationRow("Speaker participation", item.speaker, item.dominance_ratio, "%", _data_bar(item.dominance_ratio, max_participation))
+        )
+    signal_counts = {
+        "Decisions": float(len(decisions)),
+        "Actions": float(len(action_rows)),
+        "Risks / blockers": float(len(risks)),
+        "Visual evidence": float(len(visual_rows)),
+    }
+    max_signal_count = max(signal_counts.values(), default=1.0)
+    for label, value in signal_counts.items():
+        visualizations.append(ReportVisualizationRow("Execution signal mix", label, value, "count", _data_bar(value, max_signal_count)))
+
     metadata_rows = [
         ("Input video", _safe_text(result.input_video)),
         ("Analysis profile", _safe_text(metadata.get("analysis_profile"), default="n/a")),
@@ -514,6 +594,9 @@ def build_structured_report_model(result: PipelineResult) -> StructuredReportMod
         report_title=report_title,
         generated_at=generated_at,
         executive_summary=executive_summary,
+        copilot_summary=copilot_summary,
+        copilot_insights=copilot_insights,
+        visualizations=visualizations,
         metadata_rows=metadata_rows,
         decisions=decisions,
         actions=sorted(action_rows, key=lambda item: item.execution_order),
@@ -549,6 +632,19 @@ def build_markdown_report(result: PipelineResult) -> str:
         "## Executive Summary",
     ]
     lines.extend([f"- {item}" for item in model.executive_summary])
+    lines.extend(["", "## Copilot Summary"])
+    lines.extend([f"- {item}" for item in model.copilot_summary])
+    lines.extend(["", "## Copilot Insights"])
+    lines.extend(
+        [f"- **{item.category}:** {item.insight} Evidence: {item.evidence} Recommended action: {item.recommended_action}" for item in model.copilot_insights]
+    )
+    lines.extend(["", "## Meeting Visualisations"])
+    lines.extend(
+        _markdown_table(
+            ["View", "Signal", "Value", "Visual"],
+            [[item.visualization, item.label, f"{item.value:.1f} {item.unit}", item.bar] for item in model.visualizations],
+        )
+    )
     lines.extend(["", "## Meeting Metadata"])
     lines.extend([f"- **{label}:** {value}" for label, value in model.metadata_rows])
 
@@ -742,6 +838,24 @@ def write_docx_report(result: PipelineResult, path: Path) -> None:
     add_heading("Executive Summary")
     for item in model.executive_summary:
         document.add_paragraph(item, style="List Bullet")
+
+    add_heading("Copilot Summary")
+    for item in model.copilot_summary:
+        document.add_paragraph(item, style="List Bullet")
+
+    add_heading("Copilot Insights")
+    _add_table(
+        document,
+        ["Category", "Insight", "Evidence", "Recommended Action", "Confidence"],
+        [[item.category, item.insight, item.evidence, item.recommended_action, _format_ratio(item.confidence * 100)] for item in model.copilot_insights],
+    )
+
+    add_heading("Meeting Visualisations")
+    _add_table(
+        document,
+        ["View", "Signal", "Value", "Visual"],
+        [[item.visualization, item.label, f"{item.value:.1f} {item.unit}", item.bar] for item in model.visualizations],
+    )
 
     add_heading("Meeting Metadata")
     _add_table(document, ["Field", "Value"], [[label, value] for label, value in model.metadata_rows])
@@ -953,6 +1067,27 @@ def write_pdf_report(result: PipelineResult, path: Path) -> None:
     ]
     for item in model.executive_summary:
         story.append(Paragraph(f"&bull; {item}", body_style))
+    story.extend([Spacer(1, 8), Paragraph("Copilot Summary", heading_style)])
+    for item in model.copilot_summary:
+        story.append(Paragraph(f"&bull; {item}", body_style))
+    story.extend(
+        [
+            Spacer(1, 8),
+            Paragraph("Copilot Insights", heading_style),
+            make_table(
+                ["Category", "Insight", "Evidence", "Recommended Action", "Confidence"],
+                [[item.category, item.insight, item.evidence, item.recommended_action, _format_ratio(item.confidence * 100)] for item in model.copilot_insights],
+                [70, 125, 110, 140, 55],
+            ),
+            Spacer(1, 8),
+            Paragraph("Meeting Visualisations", heading_style),
+            make_table(
+                ["View", "Signal", "Value", "Visual"],
+                [[item.visualization, item.label, f"{item.value:.1f} {item.unit}", item.bar] for item in model.visualizations],
+                [110, 150, 80, 148],
+            ),
+        ]
+    )
     story.extend(
         [
             Spacer(1, 8),
@@ -1073,6 +1208,7 @@ def write_excel_report(result: PipelineResult, path: Path) -> None:
             {"section": "Executive Summary", "detail": item}
             for item in model.executive_summary
         ]
+        + [{"section": "Copilot Summary", "detail": item} for item in model.copilot_summary]
         + [{"section": label, "detail": value} for label, value in model.metadata_rows]
         + [{"section": "Recommended Follow-Through", "detail": item} for item in model.recommended_follow_through]
     )
@@ -1082,6 +1218,8 @@ def write_excel_report(result: PipelineResult, path: Path) -> None:
     workflow_df = pd.DataFrame([item.__dict__ for item in model.workflow])
     speakers_df = pd.DataFrame([item.__dict__ for item in model.participation])
     visuals_df = pd.DataFrame([item.__dict__ for item in model.visuals])
+    copilot_insights_df = pd.DataFrame([item.__dict__ for item in model.copilot_insights])
+    visualizations_df = pd.DataFrame([item.__dict__ for item in model.visualizations])
     traces_df = pd.DataFrame([item.__dict__ for item in model.traces])
     transcript_df = pd.DataFrame([segment.__dict__ for segment in result.transcript.segments])
 
@@ -1106,6 +1244,8 @@ def write_excel_report(result: PipelineResult, path: Path) -> None:
             "workflow": workflow_df,
             "speakers": speakers_df,
             "visual_evidence": visuals_df,
+            "copilot_insights": copilot_insights_df,
+            "visualizations": visualizations_df,
             "traceability": traces_df,
             "transcript": transcript_df,
         }
@@ -1118,6 +1258,26 @@ def write_excel_report(result: PipelineResult, path: Path) -> None:
                 worksheet.write(0, col_num, value, header_format)
                 worksheet.set_column(col_num, col_num, 18, text_format)
             _auto_fit_excel_columns(worksheet, dataframe)
+
+        visualization_sheet = writer.sheets["visualizations"]
+        for chart_index, visualization in enumerate(dict.fromkeys(item.visualization for item in model.visualizations)):
+            row_indexes = [index for index, item in enumerate(model.visualizations, start=1) if item.visualization == visualization]
+            if not row_indexes:
+                continue
+            chart = workbook.add_chart({"type": "bar"})
+            first_row, last_row = min(row_indexes), max(row_indexes)
+            chart.add_series(
+                {
+                    "name": visualization,
+                    "categories": ["visualizations", first_row, 1, last_row, 1],
+                    "values": ["visualizations", first_row, 2, last_row, 2],
+                    "fill": {"color": "#6366F1"},
+                }
+            )
+            chart.set_title({"name": visualization})
+            chart.set_legend({"none": True})
+            chart.set_style(10)
+            visualization_sheet.insert_chart(1 + chart_index * 16, 6, chart, {"x_scale": 1.25, "y_scale": 1.05})
 
 
 def write_summary_image(result: PipelineResult, path: Path) -> None:

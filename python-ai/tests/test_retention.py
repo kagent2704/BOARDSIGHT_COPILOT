@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from boardsight_ai.database import execute, fetchone
+from boardsight_ai.database import execute, fetchall, fetchone
 from boardsight_ai.retention import cleanup_expired_data
 from boardsight_ai.storage import append_live_session_event, create_live_session, init_storage
 
@@ -88,3 +88,36 @@ def test_cleanup_expired_data_removes_old_meetings_live_sessions_and_reports(tmp
     assert not old_dir.exists()
     assert fetchone(db_path, "SELECT id FROM meetings") is None
     assert fetchone(db_path, "SELECT id FROM live_sessions") is None
+
+
+def test_cleanup_preserves_permanent_sample_meetings(tmp_path: Path) -> None:
+    db_path = tmp_path / "meetings.db"
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    init_storage(db_path)
+    execute(
+        db_path,
+        """
+        INSERT INTO meetings (user_id, username, run_name, input_video, result_json, created_at)
+        VALUES (7, 'kashmira_admin', 'boardsight sample: board review launch readiness', 'sample.mp4', '{}', '2000-01-01 00:00:00')
+        """,
+    )
+    execute(
+        db_path,
+        """
+        INSERT INTO meetings (user_id, username, run_name, input_video, result_json, created_at)
+        VALUES (7, 'kashmira_admin', 'ordinary old run', 'old.mp4', '{}', '2000-01-01 00:00:00')
+        """,
+    )
+
+    cleanup = cleanup_expired_data(
+        db_path,
+        output_root=output_root,
+        meeting_retention_days=30,
+        live_session_retention_days=14,
+        report_retention_days=30,
+    )
+
+    rows = fetchall(db_path, "SELECT run_name FROM meetings ORDER BY id")
+    assert cleanup["deleted_meetings"] == 1
+    assert [row["run_name"] for row in rows] == ["boardsight sample: board review launch readiness"]

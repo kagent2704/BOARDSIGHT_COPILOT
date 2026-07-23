@@ -58,6 +58,9 @@ def test_write_structured_reports_generates_enterprise_sections(tmp_path: Path, 
     assert "## Decision Register" in markdown
     assert "## Action Register" in markdown
     assert "## Blockers and Risks" in markdown
+    assert "## Copilot Summary" in markdown
+    assert "## Copilot Insights" in markdown
+    assert "## Meeting Visualisations" in markdown
     assert "## Traceability" in markdown
     assert "## Recommended Follow-Through" in markdown
 
@@ -72,6 +75,8 @@ def test_write_structured_reports_generates_enterprise_sections(tmp_path: Path, 
         "workflow",
         "speakers",
         "visual_evidence",
+        "copilot_insights",
+        "visualizations",
         "traceability",
         "transcript",
     }

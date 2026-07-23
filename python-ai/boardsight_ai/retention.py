@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import os
 import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from boardsight_ai.database import execute, fetchall
+
+
+PERMANENT_SAMPLE_PREFIX = "boardsight sample:"
+PERMANENT_DEMO_USERNAME = os.getenv("BOARDSIGHT_DEMO_USERNAME", "boardsight_demo").strip().lower() or "boardsight_demo"
 
 
 def _utcnow() -> datetime:
@@ -51,9 +56,10 @@ def cleanup_expired_data(
         SELECT id, output_dir, result_file
         FROM meetings
         WHERE created_at <= :report_cutoff
+          AND LOWER(COALESCE(run_name, '')) NOT LIKE :sample_prefix
           AND (COALESCE(output_dir, '') <> '' OR COALESCE(result_file, '') <> '')
         """,
-        {"report_cutoff": report_cutoff},
+        {"report_cutoff": report_cutoff, "sample_prefix": f"{PERMANENT_SAMPLE_PREFIX}%"},
     )
     removed_report_paths = 0
     for row in report_rows:
@@ -78,8 +84,9 @@ def cleanup_expired_data(
         SELECT id, output_dir, result_file
         FROM meetings
         WHERE created_at <= :meeting_cutoff
+          AND LOWER(COALESCE(run_name, '')) NOT LIKE :sample_prefix
         """,
-        {"meeting_cutoff": meeting_cutoff},
+        {"meeting_cutoff": meeting_cutoff, "sample_prefix": f"{PERMANENT_SAMPLE_PREFIX}%"},
     )
     deleted_meetings = len(expired_meeting_rows)
     for row in expired_meeting_rows:
@@ -87,8 +94,8 @@ def cleanup_expired_data(
         _safe_remove_path(str(row.get("result_file") or ""), output_root)
     execute(
         database_path,
-        "DELETE FROM meetings WHERE created_at <= :meeting_cutoff",
-        {"meeting_cutoff": meeting_cutoff},
+        "DELETE FROM meetings WHERE created_at <= :meeting_cutoff AND LOWER(COALESCE(run_name, '')) NOT LIKE :sample_prefix",
+        {"meeting_cutoff": meeting_cutoff, "sample_prefix": f"{PERMANENT_SAMPLE_PREFIX}%"},
     )
 
     expired_live_rows = fetchall(
@@ -97,8 +104,9 @@ def cleanup_expired_data(
         SELECT id
         FROM live_sessions
         WHERE COALESCE(finalized_at, updated_at, started_at) <= :live_cutoff
+          AND LOWER(COALESCE(username, '')) <> :demo_username
         """,
-        {"live_cutoff": live_cutoff},
+        {"live_cutoff": live_cutoff, "demo_username": PERMANENT_DEMO_USERNAME},
     )
     deleted_live_sessions = len(expired_live_rows)
     if expired_live_rows:

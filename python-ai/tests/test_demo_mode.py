@@ -3,6 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from boardsight_ai import demo_mode
+from boardsight_ai.auth import create_user, get_user_by_username, init_auth_storage
+from boardsight_ai.storage import init_storage, list_meeting_results
+from boardsight_ai.workspaces import ensure_personal_workspace, init_workspace_storage
 
 
 def test_existing_demo_session_skips_password_authentication(monkeypatch, tmp_path: Path) -> None:
@@ -48,3 +51,40 @@ def test_initialized_service_path_skips_schema_setup(monkeypatch, tmp_path: Path
     )
 
     assert result == manifest
+
+
+def test_permanent_sample_runs_are_workspace_scoped_and_idempotent(tmp_path: Path) -> None:
+    auth_db_path = tmp_path / "auth.db"
+    meeting_db_path = tmp_path / "meetings.db"
+    init_auth_storage(auth_db_path)
+    init_storage(meeting_db_path)
+    init_workspace_storage(meeting_db_path)
+    assert create_user(
+        auth_db_path,
+        "kashmira_admin",
+        "safe-test-password",
+        "admin",
+        display_name="Kashmira Admin",
+        email="kashmira@example.com",
+        email_verified=True,
+    )
+
+    first = demo_mode.ensure_permanent_sample_workspaces(
+        auth_db_path,
+        meeting_db_path,
+        usernames=("kashmira_admin",),
+    )
+    second = demo_mode.ensure_permanent_sample_workspaces(
+        auth_db_path,
+        meeting_db_path,
+        usernames=("kashmira_admin",),
+    )
+
+    user = get_user_by_username(auth_db_path, "kashmira_admin")
+    assert user is not None
+    workspace = ensure_personal_workspace(meeting_db_path, user)
+    rows = list_meeting_results(meeting_db_path, organization_id=int(workspace["id"]))
+    sample_rows = [row for row in rows if str(row.get("run_name") or "").startswith(demo_mode.SAMPLE_RUN_PREFIX)]
+    assert first["seeded"] == ["kashmira_admin"]
+    assert second["already_present"] == ["kashmira_admin"]
+    assert len(sample_rows) == 3

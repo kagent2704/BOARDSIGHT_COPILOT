@@ -101,7 +101,7 @@ from boardsight_ai.storage import (
 )
 from boardsight_ai.reporting import write_structured_report_artifact, write_structured_reports
 from boardsight_ai.models import pipeline_result_from_dict
-from boardsight_ai.demo_mode import create_demo_session, ensure_demo_workspace
+from boardsight_ai.demo_mode import create_demo_session, ensure_demo_workspace, ensure_permanent_sample_workspaces
 from boardsight_ai.workspaces import (
     accept_invitation,
     assert_workspace_access,
@@ -527,6 +527,7 @@ _assign_orphaned_runs_to_bootstrap_admin()
 _migrate_legacy_admin_runs_to_bootstrap_admin()
 _run_data_protection_maintenance()
 _run_retention_maintenance()
+ensure_permanent_sample_workspaces(AUTH_DB_PATH, MEETING_DB_PATH)
 
 
 def _warm_model_caches() -> None:
@@ -1350,6 +1351,12 @@ def run_retention_cleanup(request: Request) -> dict:
 @app.get("/api/v1/meetings")
 def meetings(request: Request) -> dict:
     user = _user_with_workspace(request, _require_session_user(request))
+    if str(user.get("username") or "").lower() in {"kashmira_admin", "kashmira_2704"}:
+        ensure_permanent_sample_workspaces(
+            AUTH_DB_PATH,
+            MEETING_DB_PATH,
+            usernames=(str(user["username"]),),
+        )
     rows = list_meeting_results(MEETING_DB_PATH, organization_id=int(user["_workspace_id"]))
     return {"items": [_summarize_meeting_row(row) for row in rows]}
 

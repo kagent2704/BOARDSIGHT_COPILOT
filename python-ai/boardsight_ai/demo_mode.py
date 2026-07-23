@@ -21,11 +21,15 @@ from boardsight_ai.storage import (
     save_live_copilot_reply,
     save_meeting_result,
 )
+from boardsight_ai.workspaces import ensure_personal_workspace
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEMO_TEMPLATE_ROOT = PROJECT_ROOT / "output" / "demo-mode"
 DEMO_OUTPUT_ROOT = PROJECT_ROOT / "output" / "demo-workspace"
+SAMPLE_RUN_PREFIX = "boardsight sample:"
+SAMPLE_LIVE_TITLE = "boardsight sample: launch readiness live copilot"
+PERMANENT_SAMPLE_USERNAMES = ("kashmira_admin", "kashmira_2704")
 
 
 @dataclass(frozen=True)
@@ -61,13 +65,36 @@ def ensure_demo_workspace(
         init_auth_storage(auth_db_path)
         init_storage(meeting_db_path)
     demo_user = _upsert_demo_user(auth_db_path)
+    workspace = ensure_personal_workspace(meeting_db_path, demo_user)
+    organization_id = int(workspace["id"])
     if reset:
-        _reset_demo_workspace(meeting_db_path, int(demo_user["user_id"]))
-    existing = _existing_demo_workspace(meeting_db_path, int(demo_user["user_id"]))
+        _reset_demo_workspace(meeting_db_path, int(demo_user["user_id"]), organization_id)
+    existing = _existing_demo_workspace(meeting_db_path, int(demo_user["user_id"]), organization_id)
     if existing is not None:
         return existing
-    _reset_demo_workspace(meeting_db_path, int(demo_user["user_id"]))
-    return _seed_demo_workspace(meeting_db_path, demo_user)
+    return _seed_demo_workspace(meeting_db_path, demo_user, organization_id=organization_id, include_live=True)
+
+
+def ensure_permanent_sample_workspaces(
+    auth_db_path: Path,
+    meeting_db_path: Path,
+    *,
+    usernames: tuple[str, ...] = PERMANENT_SAMPLE_USERNAMES,
+) -> dict[str, Any]:
+    """Keep the golden-path samples available without modifying real meetings."""
+    status: dict[str, Any] = {"seeded": [], "already_present": [], "missing_accounts": []}
+    for username in usernames:
+        user = _get_demo_user(auth_db_path, username)
+        if user is None:
+            status["missing_accounts"].append(username)
+            continue
+        workspace = ensure_personal_workspace(meeting_db_path, user)
+        organization_id = int(workspace["id"])
+        before = len(_sample_meeting_rows(meeting_db_path, int(user["user_id"]), organization_id))
+        _seed_demo_workspace(meeting_db_path, user, organization_id=organization_id, include_live=False)
+        target = "already_present" if before >= len(_demo_meeting_specs()) else "seeded"
+        status[target].append(username)
+    return status
 
 
 def create_demo_session(
@@ -152,31 +179,38 @@ def _get_demo_user(auth_db_path: Path, username: str) -> dict[str, Any] | None:
     }
 
 
-def _existing_demo_workspace(meeting_db_path: Path, user_id: int) -> dict[str, Any] | None:
-    meeting_rows = fetchall(
+def _sample_meeting_rows(meeting_db_path: Path, user_id: int, organization_id: int) -> list[dict[str, Any]]:
+    return fetchall(
         meeting_db_path,
         """
         SELECT id, run_name
         FROM meetings
         WHERE user_id = :user_id
+          AND organization_id = :organization_id
+          AND LOWER(COALESCE(run_name, '')) LIKE :sample_prefix
         ORDER BY created_at DESC, id DESC
         """,
-        {"user_id": user_id},
+        {"user_id": user_id, "organization_id": organization_id, "sample_prefix": f"{SAMPLE_RUN_PREFIX}%"},
     )
+
+
+def _existing_demo_workspace(meeting_db_path: Path, user_id: int, organization_id: int) -> dict[str, Any] | None:
+    meeting_rows = _sample_meeting_rows(meeting_db_path, user_id, organization_id)
     live_row = fetchone(
         meeting_db_path,
         """
         SELECT id
         FROM live_sessions
         WHERE user_id = :user_id
+          AND organization_id = :organization_id
         ORDER BY id DESC
         LIMIT 1
         """,
-        {"user_id": user_id},
+        {"user_id": user_id, "organization_id": organization_id},
     )
-    if len(meeting_rows) < 3 or live_row is None or not DEMO_OUTPUT_ROOT.exists():
+    if len(meeting_rows) < len(_demo_meeting_specs()) or live_row is None:
         return None
-    featured = next((row for row in meeting_rows if str(row.get("run_name") or "").startswith("board review launch readiness")), meeting_rows[0])
+    featured = next((row for row in meeting_rows if "board review launch readiness" in str(row.get("run_name") or "")), meeting_rows[0])
     return {
         "workspaceName": "BoardSight Demo Workspace",
         "preferredView": "dashboard",
@@ -187,31 +221,44 @@ def _existing_demo_workspace(meeting_db_path: Path, user_id: int) -> dict[str, A
     }
 
 
-def _reset_demo_workspace(meeting_db_path: Path, user_id: int) -> None:
-    session_rows = fetchall(meeting_db_path, "SELECT id FROM live_sessions WHERE user_id = :user_id", {"user_id": user_id})
-    meeting_rows = fetchall(meeting_db_path, "SELECT id FROM meetings WHERE user_id = :user_id", {"user_id": user_id})
+def _reset_demo_workspace(meeting_db_path: Path, user_id: int, organization_id: int) -> None:
+    session_rows = fetchall(meeting_db_path, "SELECT id FROM live_sessions WHERE user_id = :user_id AND organization_id = :organization_id", {"user_id": user_id, "organization_id": organization_id})
+    meeting_rows = _sample_meeting_rows(meeting_db_path, user_id, organization_id)
     session_ids = [int(row["id"]) for row in session_rows]
     meeting_ids = [int(row["id"]) for row in meeting_rows]
     for session_id in session_ids:
         execute(meeting_db_path, "DELETE FROM live_session_visual_events WHERE session_id = :session_id", {"session_id": session_id})
         execute(meeting_db_path, "DELETE FROM live_session_events WHERE session_id = :session_id", {"session_id": session_id})
-    execute(meeting_db_path, "DELETE FROM live_sessions WHERE user_id = :user_id", {"user_id": user_id})
-    execute(meeting_db_path, "DELETE FROM meetings WHERE user_id = :user_id", {"user_id": user_id})
+    execute(meeting_db_path, "DELETE FROM live_sessions WHERE user_id = :user_id AND organization_id = :organization_id", {"user_id": user_id, "organization_id": organization_id})
+    execute(meeting_db_path, "DELETE FROM meetings WHERE user_id = :user_id AND organization_id = :organization_id AND LOWER(COALESCE(run_name, '')) LIKE :sample_prefix", {"user_id": user_id, "organization_id": organization_id, "sample_prefix": f"{SAMPLE_RUN_PREFIX}%"})
     for source_id in [*meeting_ids, *session_ids]:
         execute(meeting_db_path, "DELETE FROM gitlab_syncs WHERE source_id = :source_id", {"source_id": str(source_id)})
     if DEMO_OUTPUT_ROOT.exists():
         shutil.rmtree(DEMO_OUTPUT_ROOT, ignore_errors=True)
 
 
-def _seed_demo_workspace(meeting_db_path: Path, demo_user: dict[str, Any]) -> dict[str, Any]:
-    DEMO_OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+def _seed_demo_workspace(meeting_db_path: Path, demo_user: dict[str, Any], *, organization_id: int, include_live: bool) -> dict[str, Any]:
+    user_output_root = DEMO_OUTPUT_ROOT / str(demo_user["username"])
+    user_output_root.mkdir(parents=True, exist_ok=True)
     user_id = int(demo_user["user_id"])
     username = str(demo_user["username"])
 
     meeting_ids: list[int] = []
     featured_meeting_id = 0
     for index, spec in enumerate(_demo_meeting_specs()):
-        output_dir = DEMO_OUTPUT_ROOT / spec.slug
+        run_name = f"{SAMPLE_RUN_PREFIX} {spec.title}"
+        existing = fetchone(
+            meeting_db_path,
+            "SELECT id FROM meetings WHERE user_id = :user_id AND organization_id = :organization_id AND LOWER(run_name) = LOWER(:run_name)",
+            {"user_id": user_id, "organization_id": organization_id, "run_name": run_name},
+        )
+        if existing is not None:
+            meeting_id = int(existing["id"])
+            meeting_ids.append(meeting_id)
+            if index == 0:
+                featured_meeting_id = meeting_id
+            continue
+        output_dir = user_output_root / spec.slug
         output_dir.mkdir(parents=True, exist_ok=True)
         template_dir = DEMO_TEMPLATE_ROOT / spec.slug
         if template_dir.exists():
@@ -233,6 +280,7 @@ def _seed_demo_workspace(meeting_db_path: Path, demo_user: dict[str, Any]) -> di
             result_file=result_file,
             user_id=user_id,
             username=username,
+            organization_id=organization_id,
         )
         execute(
             meeting_db_path,
@@ -242,7 +290,7 @@ def _seed_demo_workspace(meeting_db_path: Path, demo_user: dict[str, Any]) -> di
                 created_at = :created_at
             WHERE id = :meeting_id
             """,
-            {"meeting_id": meeting_id, "run_name": spec.title.lower(), "created_at": spec.created_at},
+            {"meeting_id": meeting_id, "run_name": run_name, "created_at": spec.created_at},
         )
         if spec.workflow_editor is not None:
             payload = result.to_dict()
@@ -263,7 +311,16 @@ def _seed_demo_workspace(meeting_db_path: Path, demo_user: dict[str, Any]) -> di
         if index == 0:
             featured_meeting_id = meeting_id
 
-    live_session_id = _seed_demo_live_session(meeting_db_path, user_id=user_id, username=username)
+    live_session_id = 0
+    if include_live:
+        live_row = fetchone(
+            meeting_db_path,
+            "SELECT id FROM live_sessions WHERE user_id = :user_id AND organization_id = :organization_id ORDER BY id DESC LIMIT 1",
+            {"user_id": user_id, "organization_id": organization_id},
+        )
+        live_session_id = int(live_row["id"]) if live_row is not None else _seed_demo_live_session(
+            meeting_db_path, user_id=user_id, username=username, organization_id=organization_id
+        )
     return {
         "workspaceName": "BoardSight Demo Workspace",
         "preferredView": "dashboard",
@@ -274,8 +331,8 @@ def _seed_demo_workspace(meeting_db_path: Path, demo_user: dict[str, Any]) -> di
     }
 
 
-def _seed_demo_live_session(meeting_db_path: Path, *, user_id: int, username: str) -> int:
-    session_id = create_live_session(meeting_db_path, "launch readiness live copilot", user_id=user_id, username=username)
+def _seed_demo_live_session(meeting_db_path: Path, *, user_id: int, username: str, organization_id: int) -> int:
+    session_id = create_live_session(meeting_db_path, SAMPLE_LIVE_TITLE, user_id=user_id, username=username, organization_id=organization_id)
     events = [
         (0.0, 10.0, "Kashmira Patil", "We are approving the July launch plan today, but the compliance API contract mismatch is still blocking release certification."),
         (10.0, 22.0, "Akanksha Rao", "I can own the GitLab follow-up tickets, but we need legal sign-off on the revised disclosures by Friday."),
