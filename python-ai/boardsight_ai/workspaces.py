@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import secrets
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,8 @@ PERMANENT_SPONSORED_EMAILS = {
     "kashmirasanjaypatil@gmail.com",
     "patilkashmirasanjay@gmail.com",
 }
+_WORKSPACE_STORAGE_LOCK = threading.Lock()
+_INITIALIZED_WORKSPACE_STORES: set[str] = set()
 
 
 def _utcnow() -> datetime:
@@ -58,6 +61,17 @@ def _slugify(value: str) -> str:
 
 
 def init_workspace_storage(database_path: Path) -> None:
+    storage_key = str(database_path.resolve())
+    if storage_key in _INITIALIZED_WORKSPACE_STORES:
+        return
+    with _WORKSPACE_STORAGE_LOCK:
+        if storage_key in _INITIALIZED_WORKSPACE_STORES:
+            return
+        _init_workspace_storage(database_path)
+        _INITIALIZED_WORKSPACE_STORES.add(storage_key)
+
+
+def _init_workspace_storage(database_path: Path) -> None:
     postgres = is_postgres(database_path)
     id_type = "BIGSERIAL PRIMARY KEY" if postgres else "INTEGER PRIMARY KEY AUTOINCREMENT"
     user_id_type = "BIGINT" if postgres else "INTEGER"

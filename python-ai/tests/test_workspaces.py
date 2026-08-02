@@ -28,6 +28,25 @@ from boardsight_ai.workspaces import (
 from boardsight_ai.service import app
 
 
+def test_workspace_storage_initialization_is_process_scoped(tmp_path: Path, monkeypatch) -> None:
+    import boardsight_ai.workspaces as workspaces
+
+    database_path = tmp_path / "cached-workspaces.db"
+    calls = 0
+    original = workspaces._init_workspace_storage
+
+    def counted_initialize(path: Path) -> None:
+        nonlocal calls
+        calls += 1
+        original(path)
+
+    monkeypatch.setattr(workspaces, "_init_workspace_storage", counted_initialize)
+    workspaces.init_workspace_storage(database_path)
+    workspaces.init_workspace_storage(database_path)
+
+    assert calls == 1
+
+
 def _user(user_id: int, email: str, name: str = "BoardSight User") -> dict:
     return {"user_id": user_id, "username": email.split("@", 1)[0], "email": email, "display_name": name}
 
