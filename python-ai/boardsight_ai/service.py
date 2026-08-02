@@ -806,9 +806,8 @@ def _workspace_context(
     require_admin: bool = False,
     require_license: bool = False,
 ) -> dict:
-    personal = ensure_personal_workspace(MEETING_DB_PATH, user)
     requested_id = str(request.headers.get("x-boardsight-workspace-id") or request.query_params.get("workspace_id") or "").strip()
-    workspace = personal
+    workspace = None
     if requested_id:
         try:
             workspace = get_workspace_for_user(MEETING_DB_PATH, int(requested_id), int(user["user_id"]))
@@ -816,6 +815,8 @@ def _workspace_context(
             raise HTTPException(status_code=400, detail="Invalid workspace identifier.") from exc
         if workspace is None:
             raise HTTPException(status_code=404, detail="Workspace was not found for this account.")
+    else:
+        workspace = ensure_personal_workspace(MEETING_DB_PATH, user)
     try:
         assert_workspace_access(workspace, require_admin=require_admin, require_license=require_license)
     except PermissionError as exc:
@@ -963,8 +964,10 @@ def me(request: Request) -> dict:
 @app.get("/api/v1/workspaces")
 def workspaces(request: Request) -> dict:
     user = _require_session_user(request)
-    ensure_personal_workspace(MEETING_DB_PATH, user)
     items = list_workspaces_for_user(MEETING_DB_PATH, int(user["user_id"]))
+    if not items:
+        ensure_personal_workspace(MEETING_DB_PATH, user)
+        items = list_workspaces_for_user(MEETING_DB_PATH, int(user["user_id"]))
     return {"items": [_workspace_payload(item) for item in items]}
 
 

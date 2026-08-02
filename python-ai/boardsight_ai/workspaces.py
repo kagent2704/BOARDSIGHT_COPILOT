@@ -628,27 +628,43 @@ def delete_workspace_integration(database_path: Path, organization_id: int, prov
 
 
 def usage_summary(database_path: Path, organization_id: int) -> dict[str, Any]:
-    workspace_subscription = fetchone(
+    summary = fetchone(
         database_path,
         """
         SELECT s.plan_code, s.status, s.billing_mode, s.sponsorship_id,
                COALESCE(s.monthly_minute_limit, p.monthly_minutes) AS monthly_minute_limit,
-               COALESCE(s.licensed_member_limit, p.licensed_members) AS licensed_member_limit
+               COALESCE(s.licensed_member_limit, p.licensed_members) AS licensed_member_limit,
+               COALESCE((
+                   SELECT SUM(CASE WHEN ue.status = 'committed' THEN ue.quantity_minutes ELSE ue.reserved_minutes END)
+                   FROM usage_events ue
+                   WHERE ue.organization_id = s.organization_id
+                     AND ue.status IN ('reserved', 'committed')
+                     AND ue.created_at >= :cycle_start
+               ), 0) AS used_minutes,
+               COALESCE((
+                   SELECT COUNT(*)
+                   FROM organization_members om
+                   WHERE om.organization_id = s.organization_id
+                     AND om.license_status = 'active'
+                     AND om.role IN ('owner', 'admin', 'member')
+               ), 0) AS active_licenses
         FROM subscriptions s JOIN plan_entitlements p ON p.plan_code = s.plan_code
         WHERE s.organization_id = :organization_id
         """,
-        {"organization_id": organization_id},
-    ) or {"plan_code": "personal", "status": "inactive", "billing_mode": "customer", "sponsorship_id": None, "monthly_minute_limit": 0, "licensed_member_limit": 0}
-    usage = fetchone(database_path, "SELECT COALESCE(SUM(CASE WHEN status = 'committed' THEN quantity_minutes ELSE reserved_minutes END), 0) AS used_minutes FROM usage_events WHERE organization_id = :organization_id AND status IN ('reserved','committed') AND created_at >= :cycle_start", {"organization_id": organization_id, "cycle_start": _cycle_start()}) or {"used_minutes": 0}
-    licenses = fetchone(database_path, "SELECT COUNT(*) AS count FROM organization_members WHERE organization_id = :organization_id AND license_status = 'active' AND role IN ('owner','admin','member')", {"organization_id": organization_id}) or {"count": 0}
-    limit = float(workspace_subscription.get("monthly_minute_limit") or 0)
-    used = float(usage.get("used_minutes") or 0)
+        {"organization_id": organization_id, "cycle_start": _cycle_start()},
+    ) or {
+        "plan_code": "personal", "status": "inactive", "billing_mode": "customer",
+        "sponsorship_id": None, "monthly_minute_limit": 0, "licensed_member_limit": 0,
+        "used_minutes": 0, "active_licenses": 0,
+    }
+    limit = float(summary.get("monthly_minute_limit") or 0)
+    used = float(summary.get("used_minutes") or 0)
     return {
-        **workspace_subscription,
-        "is_sponsored": str(workspace_subscription.get("billing_mode") or "") == "internal_sponsored",
+        **summary,
+        "is_sponsored": str(summary.get("billing_mode") or "") == "internal_sponsored",
         "used_minutes": round(used, 2),
         "remaining_minutes": round(max(0.0, limit - used), 2),
-        "active_licenses": int(licenses.get("count") or 0),
+        "active_licenses": int(summary.get("active_licenses") or 0),
     }
 
 

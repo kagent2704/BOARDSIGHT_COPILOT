@@ -985,12 +985,15 @@ async function loadWorkspaceSettings() {
     `;
   }
   renderWorkspaceUsage(current);
-  const response = await apiFetch(`/api/v1/workspaces/${encodeURIComponent(state.currentWorkspaceId)}/members`);
-  if (!response.ok) {
-    return;
+  const workspaceId = encodeURIComponent(state.currentWorkspaceId);
+  const [membersResponse] = await Promise.all([
+    apiFetch(`/api/v1/workspaces/${workspaceId}/members`),
+    loadWorkspaceIntegrations()
+  ]);
+  if (membersResponse.ok) {
+    const payload = await membersResponse.json();
+    renderWorkspaceMembers(payload.items || []);
   }
-  const payload = await response.json();
-  renderWorkspaceMembers(payload.items || []);
   const canManage = ["owner", "admin"].includes(String(current?.role || "").toLowerCase());
   workspaceInviteEmail?.toggleAttribute("disabled", !canManage);
   workspaceInviteRole?.toggleAttribute("disabled", !canManage);
@@ -998,7 +1001,6 @@ async function loadWorkspaceSettings() {
   integrationProviderSelect?.toggleAttribute("disabled", !canManage);
   integrationConnectBtn?.toggleAttribute("disabled", !canManage);
   integrationDisconnectBtn?.toggleAttribute("disabled", !canManage);
-  await loadWorkspaceIntegrations();
 }
 
 function selectedIntegrationProvider() {
