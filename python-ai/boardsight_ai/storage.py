@@ -55,6 +55,7 @@ def init_storage(database_path: Path) -> None:
             execution_task_count INTEGER DEFAULT 0,
             risk_signal_count INTEGER DEFAULT 0,
             contract_version TEXT,
+            live_session_id {"BIGINT" if is_postgres(database_path) else "INTEGER"},
             result_json TEXT NOT NULL,
             created_at {timestamp_type} DEFAULT {created_default}
         )
@@ -89,10 +90,12 @@ def init_storage(database_path: Path) -> None:
         "execution_task_count": "INTEGER DEFAULT 0",
         "risk_signal_count": "INTEGER DEFAULT 0",
         "contract_version": "TEXT",
+        "live_session_id": "BIGINT" if is_postgres(database_path) else "INTEGER",
     }
     for column_name, column_type in required_columns.items():
         if column_name not in existing_columns:
             execute(database_path, f"ALTER TABLE meetings ADD COLUMN {column_name} {column_type}")
+    execute(database_path, "CREATE UNIQUE INDEX IF NOT EXISTS idx_meetings_live_session_id ON meetings(live_session_id)")
 
     execute(
         database_path,
@@ -221,8 +224,17 @@ def save_meeting_result(
     user_id: int | None = None,
     username: str | None = None,
     organization_id: int | None = None,
+    live_session_id: int | None = None,
 ) -> int:
     init_storage(database_path)
+    if live_session_id is not None:
+        existing = fetchone(
+            database_path,
+            "SELECT id FROM meetings WHERE live_session_id = :live_session_id",
+            {"live_session_id": live_session_id},
+        )
+        if existing is not None:
+            return int(existing["id"])
     payload = encrypt_text(json.dumps(result.to_dict()))
     top_speaker_ratio = 0.0
     if result.speaker_dominance.speakers:
@@ -265,6 +277,7 @@ def save_meeting_result(
             execution_task_count,
             risk_signal_count,
             contract_version,
+            live_session_id,
             result_json
         ) VALUES (
             :user_id,
@@ -294,6 +307,7 @@ def save_meeting_result(
             :execution_task_count,
             :risk_signal_count,
             :contract_version,
+            :live_session_id,
             :result_json
         )
         """,
@@ -325,6 +339,7 @@ def save_meeting_result(
             "execution_task_count": len(result.workflow_model.execution_plan),
             "risk_signal_count": len(risk_signals),
             "contract_version": agentic_contract.get("contract_version"),
+            "live_session_id": live_session_id,
             "result_json": payload,
         },
     )

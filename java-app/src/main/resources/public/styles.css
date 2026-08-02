@@ -2438,12 +2438,30 @@ body.popup-live-copilot .layout-grid {
 body.popup-live-copilot .workspace {
   padding: 12px;
 }
-body.popup-live-copilot #appView {
-  display: block !important;
-}
 body.popup-live-copilot #liveView {
   display: grid !important;
   gap: 12px;
+}
+body.popup-live-copilot #liveView > .panel > .panel-title-row,
+body.popup-live-copilot #liveView > .panel > .analysis-range-grid,
+body.popup-live-copilot #liveView > .panel > .button-row,
+body.popup-live-copilot #liveView > .panel > #liveStatus,
+body.popup-live-copilot #liveView > .panel > .range-note,
+body.popup-live-copilot .live-grid > :not(.live-copilot-card) {
+  display: none !important;
+}
+body.popup-live-copilot #liveView > .panel {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+body.popup-live-copilot .live-grid {
+  display: block;
+}
+body.popup-live-copilot .live-copilot-card {
+  display: block !important;
+  min-height: calc(100vh - 24px);
 }
 body.popup-live-copilot .live-grid {
   grid-template-columns: 1fr;

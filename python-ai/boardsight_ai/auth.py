@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import secrets
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,8 @@ PASSWORD_HASHER = PasswordHasher(
     memory_cost=_env_int("BOARDSIGHT_ARGON2_MEMORY_COST", 19456),
     parallelism=_env_int("BOARDSIGHT_ARGON2_PARALLELISM", 1),
 )
+_AUTH_STORAGE_LOCK = threading.Lock()
+_INITIALIZED_AUTH_STORES: set[str] = set()
 
 
 def _utcnow() -> datetime:
@@ -63,6 +66,17 @@ def verification_resend_cooldown_seconds() -> int:
 
 
 def init_auth_storage(database_path: Path) -> None:
+    storage_key = str(database_path.resolve())
+    if storage_key in _INITIALIZED_AUTH_STORES:
+        return
+    with _AUTH_STORAGE_LOCK:
+        if storage_key in _INITIALIZED_AUTH_STORES:
+            return
+        _init_auth_storage(database_path)
+        _INITIALIZED_AUTH_STORES.add(storage_key)
+
+
+def _init_auth_storage(database_path: Path) -> None:
     bool_type = "BOOLEAN" if is_postgres(database_path) else "INTEGER"
     timestamp_type = "TIMESTAMP" if is_postgres(database_path) else "TEXT"
     true_literal = "TRUE" if is_postgres(database_path) else "1"

@@ -522,14 +522,6 @@ def _run_data_protection_maintenance() -> dict[str, object]:
     }
 
 
-_bootstrap_admin_from_env()
-_assign_orphaned_runs_to_bootstrap_admin()
-_migrate_legacy_admin_runs_to_bootstrap_admin()
-_run_data_protection_maintenance()
-_run_retention_maintenance()
-ensure_permanent_sample_workspaces(AUTH_DB_PATH, MEETING_DB_PATH)
-
-
 def _warm_model_caches() -> None:
     WARMUP_STATE["in_progress"] = True
     config = default_config()
@@ -549,7 +541,18 @@ def _warm_model_caches() -> None:
 
 @app.on_event("startup")
 def warm_models_on_startup() -> None:
-    _run_retention_maintenance()
+    def _run_background_maintenance() -> None:
+        try:
+            _bootstrap_admin_from_env()
+            _assign_orphaned_runs_to_bootstrap_admin()
+            _migrate_legacy_admin_runs_to_bootstrap_admin()
+            _run_data_protection_maintenance()
+            _run_retention_maintenance()
+            ensure_permanent_sample_workspaces(AUTH_DB_PATH, MEETING_DB_PATH)
+        except Exception as exc:
+            WARMUP_STATE["maintenance_error"] = str(exc)
+
+    threading.Thread(target=_run_background_maintenance, name="boardsight-maintenance", daemon=True).start()
     if not WARM_MODELS_ON_STARTUP:
         return
 
@@ -1992,6 +1995,13 @@ def live_active(request: Request) -> dict:
 @app.post("/api/v1/live/start")
 async def start_live_session(request: Request, payload: dict | None = None) -> dict:
     user = _user_with_workspace(request, _require_session_user(request), require_license=True)
+    active_sessions = list_live_sessions(MEETING_DB_PATH, organization_id=int(user["_workspace_id"]), status="active")
+    if active_sessions:
+        active = active_sessions[0]
+        raise HTTPException(
+            status_code=409,
+            detail=f"Live session already active: {active.get('title') or active.get('id')}",
+        )
     request_payload = await _collect_request_payload(request, payload)
     title = str(request_payload.get("title", "")).strip() or f"Live Session {datetime.utcnow().strftime('%H:%M')}"
     session_id = create_live_session(
@@ -2170,6 +2180,28 @@ def finalize_live(session_id: int, request: Request) -> dict:
     actual_seconds = max((float(row.get("end_seconds") or 0.0) for row in event_rows), default=0.0)
     commit_minutes(MEETING_DB_PATH, f"live:{session_id}", max(0.01, actual_seconds / 60.0), live_session_id=session_id)
     session_row = _resolve_owned_live_session(session_id, user)
+    visual_rows = get_live_session_visual_events(MEETING_DB_PATH, session_id)
+    live_payload = build_live_session_payload(session_row, event_rows, default_config(), visual_rows=visual_rows)
+    live_payload["input_video"] = f"live-session:{session_id}"
+    live_payload["visual_artifacts"] = live_payload.get("live_visual_cues", [])
+    live_payload["metadata"] = {
+        "analysis_profile": "live-session",
+        "source_mode": "live-copilot",
+        "data_contract_version": "boardsight-live-v1",
+        "live_session_id": session_id,
+        "performance_report": {"runtime_profile": "boardsight-live-copilot-v1"},
+    }
+    meeting_result = pipeline_result_from_dict(live_payload)
+    safe_title = "".join(character if character.isalnum() or character in {"-", "_", " "} else "-" for character in str(session_row.get("title") or f"Live Session {session_id}"))
+    meeting_id = save_meeting_result(
+        MEETING_DB_PATH,
+        meeting_result,
+        output_dir=Path(safe_title.strip().replace(" ", "-") or f"live-session-{session_id}"),
+        user_id=int(user["user_id"]),
+        username=str(user["username"]),
+        organization_id=int(user["_workspace_id"]),
+        live_session_id=session_id,
+    )
     return {
         "session": {
             "id": session_id,
@@ -2177,7 +2209,8 @@ def finalize_live(session_id: int, request: Request) -> dict:
             "status": session_row.get("status", "finalized"),
             "started_at": session_row.get("started_at", ""),
             "finalized_at": session_row.get("finalized_at", ""),
-        }
+        },
+        "meeting_id": meeting_id,
     }
 
 

@@ -2908,6 +2908,14 @@ function renderLiveSession() {
   }
 
   const livePayload = state.liveSession;
+  const hasActiveSession = livePayload?.session?.status === "active";
+  if (liveStartBtn) {
+    liveStartBtn.disabled = hasActiveSession;
+    liveStartBtn.textContent = hasActiveSession ? "Live Session Active" : "Start Live Session";
+  }
+  if (liveSessionTitleInput) {
+    liveSessionTitleInput.disabled = hasActiveSession;
+  }
   if (!livePayload?.session) {
     liveTranscriptList.innerHTML = `<div class="empty-state">Start a live session and add updates to see the running transcript.</div>`;
     liveQuickSummary.innerHTML = `<span>Session Summary</span><strong>Awaiting transcript</strong>`;
@@ -2984,6 +2992,15 @@ async function startLiveSession() {
   let pendingShareStream = null;
   try {
     const hasActiveSession = state.liveSession?.session?.status === "active";
+    if (hasActiveSession) {
+      setLiveStatus(`Live session already active: ${state.liveSession.session.title}`);
+      liveStartBtn?.blur();
+      return;
+    }
+    if (liveStartBtn) {
+      liveStartBtn.disabled = true;
+      liveStartBtn.textContent = "Starting Live Session...";
+    }
     if (!isLiveCopilotPopup && (!livePopupHandle || livePopupHandle.closed)) {
       openLiveCopilotPopup();
     }
@@ -3049,6 +3066,11 @@ async function startLiveSession() {
     });
     if (error?.status !== 401) {
       setLiveStatus("Unable to start a live session right now.");
+    }
+  } finally {
+    if (state.liveSession?.session?.status !== "active" && liveStartBtn) {
+      liveStartBtn.disabled = false;
+      liveStartBtn.textContent = "Start Live Session";
     }
   }
 }
@@ -3396,7 +3418,8 @@ async function finalizeLiveSession() {
     stopLiveScreenCapture();
     stopLivePolling();
     await refreshLiveSession();
-    setLiveStatus("Live session finalized. Screen sharing and listening have stopped.");
+    await loadMeetings();
+    setLiveStatus("Live session finalized and saved to Meeting History.");
   } catch (error) {
     if (error?.status !== 401) {
       setLiveStatus("Unable to finalize the live session right now.");

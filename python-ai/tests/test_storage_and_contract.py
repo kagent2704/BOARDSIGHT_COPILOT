@@ -46,6 +46,34 @@ def test_save_meeting_result_round_trips_sqlite_record(tmp_path: Path, sample_pi
     assert stored["result_file"] == str(result_file)
 
 
+def test_finalized_live_session_is_saved_to_history_once(tmp_path: Path, sample_pipeline_result) -> None:
+    db_path = tmp_path / "meetings.db"
+
+    first_id = save_meeting_result(
+        db_path,
+        sample_pipeline_result,
+        output_dir=Path("Live-Board-Review"),
+        user_id=7,
+        username="admin",
+        organization_id=3,
+        live_session_id=42,
+    )
+    second_id = save_meeting_result(
+        db_path,
+        sample_pipeline_result,
+        output_dir=Path("Live-Board-Review"),
+        user_id=7,
+        username="admin",
+        organization_id=3,
+        live_session_id=42,
+    )
+
+    listing = list_meeting_results(db_path, organization_id=3)
+    assert second_id == first_id
+    assert len(listing) == 1
+    assert listing[0]["source_mode"] == sample_pipeline_result.metadata.get("source_mode")
+
+
 def test_sensitive_storage_is_encrypted_at_rest_and_decrypted_on_read(tmp_path: Path, sample_pipeline_result, monkeypatch) -> None:
     monkeypatch.setenv("BOARDSIGHT_DATA_ENCRYPTION_KEY", "boardsight-test-encryption-key")
     db_path = tmp_path / "meetings.db"
