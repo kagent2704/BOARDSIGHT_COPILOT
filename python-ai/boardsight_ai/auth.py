@@ -411,6 +411,7 @@ def authenticate_credentials(database_path: Path, identifier: str, password: str
 
 def _create_session(database_path: Path, user: dict[str, Any], ttl_seconds: int | None = None) -> dict[str, Any]:
     token = secrets.token_hex(24)
+    stored_token = hashlib.sha256(token.encode("utf-8")).hexdigest()
     expiry = _utcnow() + timedelta(seconds=ttl_seconds or session_ttl_seconds())
     execute(
         database_path,
@@ -419,7 +420,7 @@ def _create_session(database_path: Path, user: dict[str, Any], ttl_seconds: int 
         VALUES (:token, :user_id, :username, :expires_at)
         """,
         {
-            "token": token,
+            "token": stored_token,
             "user_id": int(user["user_id"]),
             "username": user["username"],
             "expires_at": _format_timestamp(expiry),
@@ -455,6 +456,7 @@ def create_session_for_user(
 
 def get_session_user(database_path: Path, token: str) -> dict[str, Any] | None:
     init_auth_storage(database_path)
+    token_hash = hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
     row = fetchone(
         database_path,
         """
@@ -462,9 +464,9 @@ def get_session_user(database_path: Path, token: str) -> dict[str, Any] | None:
                s.token, s.created_at, s.expires_at, s.revoked_at
         FROM sessions s
         JOIN users u ON u.id = s.user_id
-        WHERE s.token = :token
+        WHERE s.token IN (:token_hash, :legacy_token)
         """,
-        {"token": token},
+        {"token_hash": token_hash, "legacy_token": token},
     )
     if row is None:
         return None
@@ -479,21 +481,22 @@ def get_session_user(database_path: Path, token: str) -> dict[str, Any] | None:
         return None
     return {
         **_build_user_payload(row),
-        "token": row.get("token"),
+        "token": token,
         "expires_at": _format_timestamp(expiry),
     }
 
 
 def revoke_session(database_path: Path, token: str) -> None:
     init_auth_storage(database_path)
+    token_hash = hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
     execute(
         database_path,
         """
         UPDATE sessions
         SET revoked_at = COALESCE(revoked_at, :revoked_at)
-        WHERE token = :token
+        WHERE token IN (:token_hash, :legacy_token)
         """,
-        {"token": token, "revoked_at": _format_timestamp(_utcnow())},
+        {"token_hash": token_hash, "legacy_token": token, "revoked_at": _format_timestamp(_utcnow())},
     )
 
 

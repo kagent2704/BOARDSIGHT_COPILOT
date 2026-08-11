@@ -164,10 +164,7 @@ def analyze_frame_with_gemini(frame, config: AppConfig) -> dict[str, Any] | None
         "If the frame is mainly people, use participant-camera. If a shared screen, chart, deck, or dashboard is visible, say so. "
         "visible_people_count should be an integer estimate. textual_content should be short extracted visible text when obvious, otherwise empty."
     )
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{config.gemini_model}:generateContent?key={api_key}"
-    )
+    url = "https://generativelanguage.googleapis.com/v1beta/models/" f"{config.gemini_model}:generateContent"
     body = {
         "contents": [
             {
@@ -191,7 +188,7 @@ def analyze_frame_with_gemini(frame, config: AppConfig) -> dict[str, Any] | None
     request = urllib.request.Request(
         url,
         data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
         method="POST",
     )
 

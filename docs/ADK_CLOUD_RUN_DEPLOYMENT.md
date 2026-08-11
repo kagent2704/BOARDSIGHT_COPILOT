@@ -1,5 +1,7 @@
 # BoardSight ADK Cloud Run Deployment
 
+> **Implementation status:** Experimental only. The ADK client currently expects `/api/v1/agent/*` routes that are not implemented by the BoardSight FastAPI service in this repository, so the documented agent flow is not production-ready end to end.
+
 This is the fallback deployment path for the hackathon when Google Cloud Agent Builder UI is unstable.
 
 ## What it does

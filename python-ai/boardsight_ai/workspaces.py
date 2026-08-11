@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import secrets
 import threading
 from datetime import UTC, datetime, timedelta
@@ -30,13 +31,14 @@ PLAN_PRICING: dict[str, dict[str, Any]] = {
 
 WORKSPACE_ROLES = {"owner", "admin", "member", "viewer"}
 LICENSED_ROLES = {"owner", "admin", "member"}
-PERMANENT_SPONSORED_EMAILS = {
-    "kashmiraspatil@gmail.com",
-    "umeshgirase19@gmail.com",
-    "umeshgirase852@gmail.com",
-    "kashmirasanjaypatil@gmail.com",
-    "patilkashmirasanjay@gmail.com",
-}
+
+
+def _configured_sponsored_emails() -> set[str]:
+    return {
+        email.strip().casefold()
+        for email in os.getenv("BOARDSIGHT_SPONSORED_EMAILS", "").split(",")
+        if email.strip()
+    }
 _WORKSPACE_STORAGE_LOCK = threading.Lock()
 _INITIALIZED_WORKSPACE_STORES: set[str] = set()
 
@@ -245,7 +247,7 @@ def _init_workspace_storage(database_path: Path) -> None:
     if "sponsorship_id" not in usage_columns:
         execute(database_path, f"ALTER TABLE usage_events ADD COLUMN sponsorship_id {user_id_type}")
 
-    for sponsored_email in sorted(PERMANENT_SPONSORED_EMAILS):
+    for sponsored_email in sorted(_configured_sponsored_emails()):
         sponsorship = fetchone(database_path, "SELECT id FROM billing_sponsorships WHERE email = :email", {"email": sponsored_email})
         if sponsorship is None:
             execute(

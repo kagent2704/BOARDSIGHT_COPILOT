@@ -53,7 +53,7 @@ These profiles explicitly control expensive stages such as OCR, captioning, work
 To reduce recorded-meeting analysis time without collapsing the schema:
 
 1. Speech and speaker labeling stay as the dependency root.
-2. Decision detection, visual analysis, and attention/sentiment now run in parallel.
+2. Decision detection, visual analysis, workflow inference, and attention/sentiment run as measured sequential stages in the current lightweight production pipeline. `BOARDSIGHT_MAX_PARALLEL_WORKERS` is reserved for future bounded parallel execution and is not currently consumed by that pipeline.
 3. Heavy visual enrichment is profile-gated.
 4. Attention analysis no longer spawns a fresh Python subprocess for each run.
 

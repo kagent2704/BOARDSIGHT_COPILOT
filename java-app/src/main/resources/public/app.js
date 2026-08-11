@@ -1461,7 +1461,7 @@ function updateDashboard() {
   (state.currentMeeting.speaker_dominance?.speakers || []).slice(0, 5).forEach((speaker) => {
     const item = document.createElement("li");
     const ratio = speaker.dominance_ratio ?? speaker.dominanceRatio ?? 0;
-    item.innerHTML = `<span>${speaker.speaker}</span><strong>${ratio}%</strong>`;
+    item.innerHTML = `<span>${escapeHtml(speaker.speaker || "Unknown speaker")}</span><strong>${escapeHtml(ratio)}%</strong>`;
     legend.appendChild(item);
   });
 
@@ -1530,8 +1530,8 @@ function renderMeetingList() {
     node.innerHTML = `
       <div class="meeting-date"><span>${formatDate(item.createdAt || item.created_at).replace(" ", "<br>")}</span></div>
       <div class="meeting-meta">
-        <strong>${item.title || `Meeting ${item.id}`}</strong>
-        <div class="muted">${item.conclusion || "BoardSight analysis ready."}</div>
+        <strong>${escapeHtml(item.title || `Meeting ${item.id}`)}</strong>
+        <div class="muted">${escapeHtml(item.conclusion || "BoardSight analysis ready.")}</div>
       </div>
       <div class="meeting-sentiment">
         <span>Sentiment</span>
@@ -1604,11 +1604,11 @@ function renderMeetingDetail() {
     item.className = "speaker-row";
     item.innerHTML = `
       <div>
-        <strong>${speaker.speaker}</strong>
-        <div class="muted">${speaker.talk_time_sec || speaker.talkTimeSec || 0}s total airtime</div>
+        <strong>${escapeHtml(speaker.speaker || "Unknown speaker")}</strong>
+        <div class="muted">${escapeHtml(speaker.talk_time_sec || speaker.talkTimeSec || 0)}s total airtime</div>
         ${
           stateInfo
-            ? `<div class="muted">Attention ${formatMetric(stateInfo.average_attention)}% | Emotion ${stateInfo.dominant_emotion}</div>`
+            ? `<div class="muted">Attention ${escapeHtml(formatMetric(stateInfo.average_attention))}% | Emotion ${escapeHtml(stateInfo.dominant_emotion || "unavailable")}</div>`
             : `<div class="muted">Attention model pending for this speaker</div>`
         }
         <div class="bar"><span style="width:${ratio}%"></span></div>
@@ -1622,13 +1622,13 @@ function renderMeetingDetail() {
   buildMeetingDetailRows(state.currentMeeting).forEach((payload) => {
     const row = document.createElement("div");
     row.className = "transcript-row";
-    row.innerHTML = `<strong>${payload.left}</strong><span>${payload.middle}</span><span>${payload.right}</span>`;
+    row.innerHTML = `<strong>${escapeHtml(payload.left)}</strong><span>${escapeHtml(payload.middle)}</span><span>${escapeHtml(payload.right)}</span>`;
     transcriptList.appendChild(row);
   });
 
   const transcriptPreview = document.createElement("div");
   transcriptPreview.className = "transcript-row";
-  transcriptPreview.innerHTML = `<strong>Transcript Preview</strong><span>Showing first 5 entries only</span><span>${buildTranscriptPreview(state.currentMeeting)}</span>`;
+  transcriptPreview.innerHTML = `<strong>Transcript Preview</strong><span>Showing first 5 entries only</span><span>${escapeHtml(buildTranscriptPreview(state.currentMeeting))}</span>`;
   transcriptList.appendChild(transcriptPreview);
 
   const transcriptDownload = document.createElement("div");
@@ -2143,7 +2143,7 @@ function renderTrace() {
     const speakers = (trace.supporting_speakers || []).join(", ");
     const item = document.createElement("div");
     item.className = "trace-item";
-    item.innerHTML = `<strong>${trace.trace_id}</strong><div class="line"></div><div class="trace-card"><strong>${trace.title}</strong><p>${trace.summary}</p><small class="muted">${trace.rationale.join(" ")}</small><p class="muted">Priority ${formatMetric(trace.priority_score)} | Type ${trace.decision_type || "decision"}</p>${speakers ? `<p class="muted">Supporting speakers: ${speakers}</p>` : ""}${tasks ? `<p class="muted">Tasks: ${tasks}</p>` : ""}</div>`;
+    item.innerHTML = `<strong>${escapeHtml(trace.trace_id || "Trace")}</strong><div class="line"></div><div class="trace-card"><strong>${escapeHtml(trace.title || "Decision trace")}</strong><p>${escapeHtml(trace.summary || "")}</p><small class="muted">${escapeHtml((trace.rationale || []).join(" "))}</small><p class="muted">Priority ${escapeHtml(formatMetric(trace.priority_score))} | Type ${escapeHtml(trace.decision_type || "decision")}</p>${speakers ? `<p class="muted">Supporting speakers: ${escapeHtml(speakers)}</p>` : ""}${tasks ? `<p class="muted">Tasks: ${escapeHtml(tasks)}</p>` : ""}</div>`;
     traceTimeline.appendChild(item);
   });
 
@@ -2934,7 +2934,7 @@ function renderLiveSession() {
     ? `<div class="empty-state">Listening is active, but no transcript chunks have been stored yet.</div>`
     : transcriptSegments.slice(-20).map((segment) => `
       <div class="transcript-row">
-        <strong>${segment.timestamp}</strong>
+        <strong>${escapeHtml(segment.timestamp || "--:--")}</strong>
         <span>${escapeHtml(segment.speaker)}</span>
         <span>${escapeHtml(segment.text)}</span>
       </div>
@@ -3946,7 +3946,7 @@ function renderDecisionTimelineChart(container, meeting) {
       || "BoardSight detected a timeline event.";
     return `
       <div class="timeline-entry">
-        <div class="timeline-time">${decision.timestamp || "--:--"}</div>
+        <div class="timeline-time">${escapeHtml(decision.timestamp || "--:--")}</div>
         <div class="timeline-dot ${tone}"></div>
         <div class="timeline-content">
           <strong>${title}</strong>
@@ -3970,7 +3970,7 @@ function renderCvCountRows(counts, total) {
     return `
       <div class="cv-lane-item">
         <div class="cv-lane-head">
-          <strong>${label}</strong>
+          <strong>${escapeHtml(label)}</strong>
           <span>${count} window${count === 1 ? "" : "s"}</span>
         </div>
         <div class="cv-mini-bar"><span style="width:${width}%"></span></div>
@@ -4000,11 +4000,11 @@ function renderCvTimeline(frameWindows, duration) {
         </div>
         <div class="cv-frame-track"><span style="width:${width}%"></span></div>
         <div class="cv-frame-tags">
-          <span class="cv-chip">${displayMode}</span>
-          <span class="cv-chip">${artifactType}</span>
+          <span class="cv-chip">${escapeHtml(displayMode)}</span>
+          <span class="cv-chip">${escapeHtml(artifactType)}</span>
           <span class="cv-chip is-muted">${detectionCount} object detection${detectionCount === 1 ? "" : "s"}</span>
         </div>
-        <div class="muted">${summary}</div>
+        <div class="muted">${escapeHtml(summary)}</div>
       </article>
     `;
   }).join("");
@@ -4018,7 +4018,7 @@ function renderCvContentArtifacts(artifacts) {
     <article class="cv-content-item">
       <div class="cv-frame-head">
         <strong>${formatTime(Number(artifact.start_time || 0))} - ${formatTime(Number(artifact.end_time || 0))}</strong>
-        <span class="cv-chip">${normalizeCvLabel(artifact.artifact_type || artifact.artifactType || "visual-artifact")}</span>
+        <span class="cv-chip">${escapeHtml(normalizeCvLabel(artifact.artifact_type || artifact.artifactType || "visual-artifact"))}</span>
       </div>
       <p>${escapeHtml(String(artifact.content_text || artifact.content_insight || ""))}</p>
       <div class="muted">${escapeHtml(String(artifact.content_summary || "Model-backed presentation content extraction."))}</div>
@@ -4059,10 +4059,10 @@ function renderWorkflowSnapshot(prioritizedDecisions, workflowStages, executionP
   if (prioritizedDecisions.length > 0) {
     return `<div class="workflow-nodes">${prioritizedDecisions.slice(0, 4).map((decision) => {
       const barWidth = Math.max(24, Math.min(100, Number(decision.priority_score || 0)));
-      return `<div class="workflow-node"><strong>#${decision.execution_rank} ${decision.decision_id}</strong><br><small>${decision.speaker}</small><div class="bar"><span style="width:${barWidth}%"></span></div><small>${decision.priority_score} priority</small></div>`;
+      return `<div class="workflow-node"><strong>#${escapeHtml(decision.execution_rank)} ${escapeHtml(decision.decision_id)}</strong><br><small>${escapeHtml(decision.speaker || "Unassigned")}</small><div class="bar"><span style="width:${barWidth}%"></span></div><small>${escapeHtml(decision.priority_score)} priority</small></div>`;
     }).join("")}</div>`;
   }
-  return `<div class="workflow-nodes">${workflowStages.slice(0, 4).map((stage, index) => `<div class="workflow-node"><strong>${stage.stage}</strong><br><small>${executionPlan[index]?.task_type || "workflow-stage"}</small></div>`).join("")}</div>`;
+  return `<div class="workflow-nodes">${workflowStages.slice(0, 4).map((stage, index) => `<div class="workflow-node"><strong>${escapeHtml(stage.stage || stage.name || "Workflow stage")}</strong><br><small>${escapeHtml(executionPlan[index]?.task_type || "workflow-stage")}</small></div>`).join("")}</div>`;
 }
 
 function timestampToSeconds(timestamp) {

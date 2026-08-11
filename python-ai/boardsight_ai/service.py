@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 import sys
 import tempfile
 import threading
+import time
+from collections import defaultdict, deque
 from datetime import datetime
 from urllib.parse import unquote
 from pathlib import Path
+from typing import Any
 
 CURRENT_DIR = Path(__file__).resolve().parent
 PACKAGE_ROOT = CURRENT_DIR.parent
@@ -139,6 +143,13 @@ init_agent_storage(MEETING_DB_PATH)
 init_gitlab_storage(MEETING_DB_PATH)
 
 app = FastAPI(title="BoardSight AI Service", version="0.1.0")
+MAX_UPLOAD_BYTES = max(1, int(os.getenv("BOARDSIGHT_MAX_UPLOAD_MB", "500"))) * 1024 * 1024
+UPLOAD_CHUNK_BYTES = 1024 * 1024
+ALLOWED_MEDIA_EXTENSIONS = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
+LOGIN_RATE_LIMIT_ATTEMPTS = max(1, int(os.getenv("BOARDSIGHT_LOGIN_RATE_LIMIT_ATTEMPTS", "8")))
+LOGIN_RATE_LIMIT_WINDOW_SECONDS = max(1, int(os.getenv("BOARDSIGHT_LOGIN_RATE_LIMIT_WINDOW_SECONDS", "300")))
+_LOGIN_ATTEMPTS: dict[str, deque[float]] = defaultdict(deque)
+_LOGIN_ATTEMPTS_LOCK = threading.Lock()
 WARM_MODELS_ON_STARTUP = os.getenv("BOARDSIGHT_WARM_MODELS", "0").strip().lower() in {"1", "true", "yes", "on"}
 WARMUP_STATE: dict[str, object] = {
     "enabled": WARM_MODELS_ON_STARTUP,
@@ -180,6 +191,69 @@ app.add_middleware(
 
 def _env_bool(name: str, default: str = "false") -> bool:
     return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _login_rate_key(request: Request, identifier: str) -> str:
+    client_host = request.client.host if request.client is not None else "unknown"
+    normalized_identifier = identifier.strip().casefold()
+    return hashlib.sha256(f"{client_host}|{normalized_identifier}".encode("utf-8")).hexdigest()
+
+
+def _check_login_rate_limit(key: str) -> int:
+    now = time.monotonic()
+    cutoff = now - LOGIN_RATE_LIMIT_WINDOW_SECONDS
+    with _LOGIN_ATTEMPTS_LOCK:
+        attempts = _LOGIN_ATTEMPTS[key]
+        while attempts and attempts[0] <= cutoff:
+            attempts.popleft()
+        if len(attempts) >= LOGIN_RATE_LIMIT_ATTEMPTS:
+            return max(1, int(LOGIN_RATE_LIMIT_WINDOW_SECONDS - (now - attempts[0])))
+    return 0
+
+
+def _record_failed_login(key: str) -> None:
+    with _LOGIN_ATTEMPTS_LOCK:
+        _LOGIN_ATTEMPTS[key].append(time.monotonic())
+
+
+def _clear_login_attempts(key: str) -> None:
+    with _LOGIN_ATTEMPTS_LOCK:
+        _LOGIN_ATTEMPTS.pop(key, None)
+
+
+def _validate_upload_name(filename: str) -> str:
+    suffix = Path(filename or "meeting.mp4").suffix.lower() or ".mp4"
+    if suffix not in ALLOWED_MEDIA_EXTENSIONS:
+        supported = ", ".join(sorted(ALLOWED_MEDIA_EXTENSIONS))
+        raise HTTPException(status_code=415, detail=f"Unsupported meeting file type. Supported types: {supported}.")
+    return suffix
+
+
+async def _stream_upload_to_path(upload: UploadFile, destination: Path) -> int:
+    total = 0
+    with destination.open("wb") as handle:
+        while True:
+            chunk = await upload.read(UPLOAD_CHUNK_BYTES)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail="Meeting upload exceeds the configured size limit.")
+            handle.write(chunk)
+    return total
+
+
+async def _stream_request_to_path(request: Request, destination: Path) -> int:
+    total = 0
+    with destination.open("wb") as handle:
+        async for chunk in request.stream():
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail="Meeting upload exceeds the configured size limit.")
+            handle.write(chunk)
+    return total
 
 
 def _bootstrap_admin_from_env() -> None:
@@ -621,12 +695,22 @@ async def login(request: Request, payload: dict | None = None) -> dict:
     request_payload = await _collect_request_payload(request, payload)
     identifier = str(request_payload.get("identifier", "") or request_payload.get("username", "") or request_payload.get("email", ""))
     password = str(request_payload.get("password", ""))
+    rate_key = _login_rate_key(request, identifier)
+    retry_after = _check_login_rate_limit(rate_key)
+    if retry_after:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many sign-in attempts. Please wait before trying again.",
+            headers={"Retry-After": str(retry_after)},
+        )
     session = authenticate_user(AUTH_DB_PATH, identifier, password)
     if session is None:
+        _record_failed_login(rate_key)
         user, reason = authenticate_credentials(AUTH_DB_PATH, identifier, password)
         if reason == "email_not_verified" and user is not None:
             raise HTTPException(status_code=403, detail="Email verification is required before signing in.")
         raise HTTPException(status_code=401, detail="Invalid username, email, or password.")
+    _clear_login_attempts(rate_key)
     return session
 
 
@@ -2377,7 +2461,7 @@ async def run_pipeline_endpoint(
         if output_dir_name is None:
             output_dir_name = str(request_payload.get("output_dir_name", "")).strip() or None
 
-    if resolved_upload is None:
+    if resolved_upload is None and "multipart/form-data" in request_content_type.lower():
         try:
             form = await request.form()
         except Exception:
@@ -2389,7 +2473,6 @@ async def run_pipeline_endpoint(
                     resolved_upload = candidate
                     break
 
-    raw_upload_bytes = b""
     raw_upload_name = request.headers.get("X-Filename") or request_query.get("filename") or "meeting.mp4"
     shared_file_path = str(request_payload.get("file_path", "")).strip() or request_query.get("file_path")
     start_seconds = _parse_optional_float(request_payload.get("start_seconds", request_query.get("start_seconds")))
@@ -2410,27 +2493,23 @@ async def run_pipeline_endpoint(
                 analysis_profile=analysis_profile,
             )
 
-        try:
-            raw_upload_bytes = await request.body()
-        except Exception:
-            raw_upload_bytes = b""
-        if not raw_upload_bytes:
-            raise HTTPException(status_code=400, detail="No uploaded file was provided to the AI service.")
-
     resolved_name = resolved_upload.filename if resolved_upload is not None else unquote(raw_upload_name)
-    suffix = Path(resolved_name or "meeting.mp4").suffix or ".mp4"
+    suffix = _validate_upload_name(resolved_name or "meeting.mp4")
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Meeting upload exceeds the configured size limit.")
     output_dir = _resolve_output_dir(output_dir_name)
 
     with tempfile.TemporaryDirectory(prefix="boardsight-") as temp_dir_name:
         temp_dir = Path(temp_dir_name)
         video_path = temp_dir / f"upload{suffix}"
         if resolved_upload is not None:
-            video_path.write_bytes(await resolved_upload.read())
+            uploaded_bytes = await _stream_upload_to_path(resolved_upload, video_path)
         else:
-            video_path.write_bytes(raw_upload_bytes)
+            uploaded_bytes = await _stream_request_to_path(request, video_path)
 
-        if not video_path.exists():
-            raise HTTPException(status_code=400, detail="Failed to persist uploaded file.")
+        if not video_path.exists() or uploaded_bytes == 0:
+            raise HTTPException(status_code=400, detail="No uploaded file was provided to the AI service.")
 
         analysis_input_path, analysis_range = _resolve_analysis_input(video_path, output_dir, start_seconds, end_seconds)
         usage_minutes = _analysis_minutes(analysis_input_path, analysis_range)

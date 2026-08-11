@@ -1,5 +1,7 @@
 # Google Cloud Agent Implementation Plan
 
+> **Current boundary:** This document describes the target architecture. The `python-agent` tool client exists, but the FastAPI `/api/v1/agent/*` contract remains to be implemented and tested before this flow can be described as integrated.
+
 ## Goal
 
 Turn BoardSight from a local meeting-analysis application into a hackathon-ready AI agent system built around:

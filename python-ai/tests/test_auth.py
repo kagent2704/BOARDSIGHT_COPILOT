@@ -48,6 +48,31 @@ def test_create_user_and_authenticate_by_username_and_email(tmp_path: Path) -> N
     session_user = get_session_user(db_path, by_email["token"])
     assert session_user is not None
     assert session_user["role"] == "admin"
+    stored_session = fetchone(db_path, "SELECT token FROM sessions WHERE user_id = :user_id", {"user_id": int(session_user["user_id"])})
+    assert stored_session is not None
+    assert stored_session["token"] != by_email["token"]
+    assert len(str(stored_session["token"])) == 64
+
+
+def test_legacy_plaintext_session_remains_usable_and_revocable(tmp_path: Path) -> None:
+    db_path = tmp_path / "auth.db"
+    create_user(db_path, "legacy-session", "secret", display_name="Legacy", email="legacy-session@example.com")
+    user = get_user_by_username(db_path, "legacy-session")
+    assert user is not None
+    execute(
+        db_path,
+        "INSERT INTO sessions (token, user_id, username, expires_at) VALUES (:token, :user_id, :username, :expires_at)",
+        {
+            "token": "legacy-plaintext-token",
+            "user_id": int(user["user_id"]),
+            "username": user["username"],
+            "expires_at": "2999-01-01T00:00:00+00:00",
+        },
+    )
+
+    assert get_session_user(db_path, "legacy-plaintext-token") is not None
+    revoke_session(db_path, "legacy-plaintext-token")
+    assert get_session_user(db_path, "legacy-plaintext-token") is None
 
 
 def test_unverified_user_cannot_authenticate_until_token_is_verified(tmp_path: Path) -> None:

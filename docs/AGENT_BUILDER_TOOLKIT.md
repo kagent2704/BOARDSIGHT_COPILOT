@@ -1,5 +1,7 @@
 # Agent Builder Toolkit
 
+> **Implementation status:** This is a target integration contract. The `python-agent` client is present, but the current FastAPI service does not yet expose the `/api/v1/agent/*` endpoints listed below. Do not register or deploy this toolkit as a working production integration until those routes and their end-to-end tests are implemented.
+
 ## Recommended Tool Registration
 
 Register the BoardSight FastAPI service in Google Cloud Agent Builder as a tool-backed HTTP service.
