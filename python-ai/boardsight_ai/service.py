@@ -2,14 +2,11 @@ from __future__ import annotations
 
 import argparse
 import base64
-import hashlib
 import json
 import os
 import sys
 import tempfile
 import threading
-import time
-from collections import defaultdict, deque
 from datetime import datetime
 from urllib.parse import unquote
 from pathlib import Path
@@ -37,6 +34,8 @@ from boardsight_ai.providers.media import clip_video_fast, probe_video
 from boardsight_ai.auth import (
     authenticate_credentials,
     authenticate_user,
+    clear_login_attempts,
+    cleanup_expired_login_attempts,
     cleanup_expired_sessions,
     cleanup_expired_verification_tokens,
     create_user,
@@ -46,6 +45,7 @@ from boardsight_ai.auth import (
     get_user_by_username,
     init_auth_storage,
     issue_email_verification_token,
+    reserve_login_attempt,
     revoke_session,
     session_ttl_seconds,
     upsert_admin_user,
@@ -148,8 +148,6 @@ UPLOAD_CHUNK_BYTES = 1024 * 1024
 ALLOWED_MEDIA_EXTENSIONS = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
 LOGIN_RATE_LIMIT_ATTEMPTS = max(1, int(os.getenv("BOARDSIGHT_LOGIN_RATE_LIMIT_ATTEMPTS", "8")))
 LOGIN_RATE_LIMIT_WINDOW_SECONDS = max(1, int(os.getenv("BOARDSIGHT_LOGIN_RATE_LIMIT_WINDOW_SECONDS", "300")))
-_LOGIN_ATTEMPTS: dict[str, deque[float]] = defaultdict(deque)
-_LOGIN_ATTEMPTS_LOCK = threading.Lock()
 WARM_MODELS_ON_STARTUP = os.getenv("BOARDSIGHT_WARM_MODELS", "0").strip().lower() in {"1", "true", "yes", "on"}
 WARMUP_STATE: dict[str, object] = {
     "enabled": WARM_MODELS_ON_STARTUP,
@@ -194,31 +192,11 @@ def _env_bool(name: str, default: str = "false") -> bool:
 
 
 def _login_rate_key(request: Request, identifier: str) -> str:
+    import hashlib
+
     client_host = request.client.host if request.client is not None else "unknown"
     normalized_identifier = identifier.strip().casefold()
     return hashlib.sha256(f"{client_host}|{normalized_identifier}".encode("utf-8")).hexdigest()
-
-
-def _check_login_rate_limit(key: str) -> int:
-    now = time.monotonic()
-    cutoff = now - LOGIN_RATE_LIMIT_WINDOW_SECONDS
-    with _LOGIN_ATTEMPTS_LOCK:
-        attempts = _LOGIN_ATTEMPTS[key]
-        while attempts and attempts[0] <= cutoff:
-            attempts.popleft()
-        if len(attempts) >= LOGIN_RATE_LIMIT_ATTEMPTS:
-            return max(1, int(LOGIN_RATE_LIMIT_WINDOW_SECONDS - (now - attempts[0])))
-    return 0
-
-
-def _record_failed_login(key: str) -> None:
-    with _LOGIN_ATTEMPTS_LOCK:
-        _LOGIN_ATTEMPTS[key].append(time.monotonic())
-
-
-def _clear_login_attempts(key: str) -> None:
-    with _LOGIN_ATTEMPTS_LOCK:
-        _LOGIN_ATTEMPTS.pop(key, None)
 
 
 def _validate_upload_name(filename: str) -> str:
@@ -568,10 +546,15 @@ def _run_retention_maintenance() -> dict[str, object]:
     )
     auth_session_cleanup = cleanup_expired_sessions(AUTH_DB_PATH)
     verification_cleanup = cleanup_expired_verification_tokens(AUTH_DB_PATH)
+    login_limit_cleanup = cleanup_expired_login_attempts(
+        AUTH_DB_PATH,
+        window_seconds=LOGIN_RATE_LIMIT_WINDOW_SECONDS,
+    )
     return {
         **meeting_cleanup,
         "deleted_auth_sessions": auth_session_cleanup,
         "deleted_verification_tokens": verification_cleanup,
+        "deleted_login_rate_limits": login_limit_cleanup,
     }
 
 
@@ -696,7 +679,12 @@ async def login(request: Request, payload: dict | None = None) -> dict:
     identifier = str(request_payload.get("identifier", "") or request_payload.get("username", "") or request_payload.get("email", ""))
     password = str(request_payload.get("password", ""))
     rate_key = _login_rate_key(request, identifier)
-    retry_after = _check_login_rate_limit(rate_key)
+    retry_after = reserve_login_attempt(
+        AUTH_DB_PATH,
+        rate_key,
+        max_attempts=LOGIN_RATE_LIMIT_ATTEMPTS,
+        window_seconds=LOGIN_RATE_LIMIT_WINDOW_SECONDS,
+    )
     if retry_after:
         raise HTTPException(
             status_code=429,
@@ -705,12 +693,11 @@ async def login(request: Request, payload: dict | None = None) -> dict:
         )
     session = authenticate_user(AUTH_DB_PATH, identifier, password)
     if session is None:
-        _record_failed_login(rate_key)
         user, reason = authenticate_credentials(AUTH_DB_PATH, identifier, password)
         if reason == "email_not_verified" and user is not None:
             raise HTTPException(status_code=403, detail="Email verification is required before signing in.")
         raise HTTPException(status_code=401, detail="Invalid username, email, or password.")
-    _clear_login_attempts(rate_key)
+    clear_login_attempts(AUTH_DB_PATH, rate_key)
     return session
 
 

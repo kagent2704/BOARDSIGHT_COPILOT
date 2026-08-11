@@ -9,6 +9,7 @@ import pytest
 from fastapi import HTTPException, UploadFile
 
 from boardsight_ai import service
+from boardsight_ai.auth import cleanup_expired_login_attempts, clear_login_attempts, reserve_login_attempt
 from boardsight_ai.config import AppConfig
 from boardsight_ai.providers import llm
 from boardsight_ai.workspaces import _configured_sponsored_emails
@@ -50,17 +51,24 @@ def test_sponsored_accounts_come_from_environment(monkeypatch) -> None:
     assert _configured_sponsored_emails() == {"founder@example.com", "second@example.com"}
 
 
-def test_login_rate_limit_blocks_after_configured_failures(monkeypatch) -> None:
+def test_login_rate_limit_blocks_after_configured_failures(tmp_path: Path) -> None:
+    db_path = tmp_path / "shared-rate-limit.db"
     key = "test-login-key"
-    service._clear_login_attempts(key)
-    monkeypatch.setattr(service, "LOGIN_RATE_LIMIT_ATTEMPTS", 2)
-    monkeypatch.setattr(service, "LOGIN_RATE_LIMIT_WINDOW_SECONDS", 60)
+    assert reserve_login_attempt(db_path, key, max_attempts=2, window_seconds=60, now_epoch=1000) == 0
+    assert reserve_login_attempt(db_path, key, max_attempts=2, window_seconds=60, now_epoch=1001) == 0
+    assert reserve_login_attempt(db_path, key, max_attempts=2, window_seconds=60, now_epoch=1002) == 58
 
-    service._record_failed_login(key)
-    assert service._check_login_rate_limit(key) == 0
-    service._record_failed_login(key)
-    assert service._check_login_rate_limit(key) > 0
-    service._clear_login_attempts(key)
+    clear_login_attempts(db_path, key)
+    assert reserve_login_attempt(db_path, key, max_attempts=2, window_seconds=60, now_epoch=1003) == 0
+
+
+def test_login_rate_limit_window_expires_and_cleanup_removes_stale_rows(tmp_path: Path) -> None:
+    db_path = tmp_path / "shared-rate-limit.db"
+    key = "expiring-login-key"
+    assert reserve_login_attempt(db_path, key, max_attempts=1, window_seconds=60, now_epoch=2000) == 0
+    assert reserve_login_attempt(db_path, key, max_attempts=1, window_seconds=60, now_epoch=2001) == 59
+    assert reserve_login_attempt(db_path, key, max_attempts=1, window_seconds=60, now_epoch=2061) == 0
+    assert cleanup_expired_login_attempts(db_path, window_seconds=60, now_epoch=2121) == 1
 
 
 def test_gemini_api_key_is_sent_in_header_not_url(tmp_path: Path, monkeypatch) -> None:

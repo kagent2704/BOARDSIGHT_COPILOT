@@ -11,7 +11,8 @@ from typing import Any
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
 
-from boardsight_ai.database import execute, fetchone, is_postgres, table_columns
+from boardsight_ai.database import execute, fetchone, get_engine, is_postgres, table_columns
+from sqlalchemy import text
 
 
 def _env_int(name: str, default: int) -> int:
@@ -193,6 +194,19 @@ def _init_auth_storage(database_path: Path) -> None:
     )
     execute(database_path, "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)")
 
+    execute(
+        database_path,
+        f"""
+        CREATE TABLE IF NOT EXISTS login_rate_limits (
+            key_hash TEXT PRIMARY KEY,
+            attempt_count INTEGER NOT NULL DEFAULT 0,
+            window_started_epoch BIGINT NOT NULL,
+            updated_at {timestamp_type} DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+    )
+    execute(database_path, "CREATE INDEX IF NOT EXISTS idx_login_rate_limits_window ON login_rate_limits(window_started_epoch)")
+
     session_columns = table_columns(database_path, "sessions")
     if "user_id" not in session_columns:
         execute(
@@ -203,6 +217,66 @@ def _init_auth_storage(database_path: Path) -> None:
         execute(database_path, f"ALTER TABLE sessions ADD COLUMN expires_at {timestamp_type}")
     if "revoked_at" not in session_columns:
         execute(database_path, f"ALTER TABLE sessions ADD COLUMN revoked_at {timestamp_type}")
+
+
+def reserve_login_attempt(
+    database_path: Path,
+    key_hash: str,
+    *,
+    max_attempts: int,
+    window_seconds: int,
+    now_epoch: int | None = None,
+) -> int:
+    """Atomically reserve a login attempt and return Retry-After seconds, or zero when allowed."""
+    init_auth_storage(database_path)
+    resolved_now = int(now_epoch if now_epoch is not None else _utcnow().timestamp())
+    cutoff = resolved_now - max(1, int(window_seconds))
+    engine = get_engine(database_path)
+    statement = text(
+        """
+        INSERT INTO login_rate_limits (key_hash, attempt_count, window_started_epoch, updated_at)
+        VALUES (:key_hash, 1, :now_epoch, CURRENT_TIMESTAMP)
+        ON CONFLICT (key_hash) DO UPDATE SET
+            attempt_count = CASE
+                WHEN login_rate_limits.window_started_epoch <= :cutoff THEN 1
+                ELSE login_rate_limits.attempt_count + 1
+            END,
+            window_started_epoch = CASE
+                WHEN login_rate_limits.window_started_epoch <= :cutoff THEN :now_epoch
+                ELSE login_rate_limits.window_started_epoch
+            END,
+            updated_at = CURRENT_TIMESTAMP
+        RETURNING attempt_count, window_started_epoch
+        """
+    )
+    with engine.begin() as connection:
+        row = connection.execute(
+            statement,
+            {"key_hash": key_hash, "now_epoch": resolved_now, "cutoff": cutoff},
+        ).mappings().one()
+    attempt_count = int(row["attempt_count"])
+    if attempt_count <= max(1, int(max_attempts)):
+        return 0
+    elapsed = max(0, resolved_now - int(row["window_started_epoch"]))
+    return max(1, int(window_seconds) - elapsed)
+
+
+def clear_login_attempts(database_path: Path, key_hash: str) -> None:
+    init_auth_storage(database_path)
+    execute(database_path, "DELETE FROM login_rate_limits WHERE key_hash = :key_hash", {"key_hash": key_hash})
+
+
+def cleanup_expired_login_attempts(database_path: Path, *, window_seconds: int, now_epoch: int | None = None) -> int:
+    init_auth_storage(database_path)
+    resolved_now = int(now_epoch if now_epoch is not None else _utcnow().timestamp())
+    cutoff = resolved_now - max(1, int(window_seconds))
+    engine = get_engine(database_path)
+    with engine.begin() as connection:
+        result = connection.execute(
+            text("DELETE FROM login_rate_limits WHERE window_started_epoch <= :cutoff"),
+            {"cutoff": cutoff},
+        )
+        return max(0, int(result.rowcount or 0))
 
 
 def legacy_hash_password(password: str) -> str:
