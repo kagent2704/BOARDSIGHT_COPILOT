@@ -12,7 +12,10 @@ def test_register_returns_verification_pending_without_blocking_delivery(tmp_pat
 
     monkeypatch.setattr("boardsight_ai.service.AUTH_DB_PATH", auth_db)
     monkeypatch.setattr("boardsight_ai.service.MEETING_DB_PATH", meeting_db)
-    monkeypatch.setattr("boardsight_ai.service._email_provider_is_configured", lambda: True)
+    monkeypatch.setattr(
+        "boardsight_ai.service._email_delivery_status",
+        lambda: {"configured": True, "reason": ""},
+    )
 
     delivery_calls: list[dict[str, str]] = []
 
