@@ -35,6 +35,10 @@ COPY requirements-core.txt requirements-runtime.txt ./
 RUN pip install --upgrade pip setuptools wheel \
     && pip install -r requirements-core.txt -r requirements-runtime.txt
 
+RUN python -c "from huggingface_hub import snapshot_download; snapshot_download('Systran/faster-whisper-tiny.en', local_dir='/workspace/models/faster-whisper-tiny.en')"
+
+ENV BOARDSIGHT_FASTER_WHISPER_MODEL=/workspace/models/faster-whisper-tiny.en
+
 COPY . /workspace/python-ai
 
 RUN mkdir -p /workspace/output /workspace/.cache/huggingface
