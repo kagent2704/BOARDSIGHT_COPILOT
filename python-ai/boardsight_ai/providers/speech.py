@@ -11,16 +11,22 @@ from .diarization import diarize_audio
 from .runtime import optional_import
 
 _ASR_PIPELINE = None
+_FASTER_WHISPER_ERROR = ""
 
 
 @lru_cache(maxsize=2)
 def _faster_whisper_model(model_name: str):
+    global _FASTER_WHISPER_ERROR
     faster_whisper = optional_import("faster_whisper")
     if faster_whisper is None:
+        _FASTER_WHISPER_ERROR = "faster_whisper import unavailable"
         return None
     try:
-        return faster_whisper.WhisperModel(model_name, device="cpu", compute_type="int8")
-    except Exception:
+        model = faster_whisper.WhisperModel(model_name, device="cpu", compute_type="int8")
+        _FASTER_WHISPER_ERROR = ""
+        return model
+    except Exception as exc:
+        _FASTER_WHISPER_ERROR = f"{type(exc).__name__}: {exc}"
         return None
 
 
@@ -137,7 +143,10 @@ def transcribe(video_path: Path, config: AppConfig) -> tuple[list[TranscriptSegm
         if not transcript_segments:
             asr = _get_transformer_asr()
             if asr is None:
-                raise RuntimeError("No ASR backend available.")
+                raise RuntimeError(
+                    "No ASR backend available. "
+                    + (_FASTER_WHISPER_ERROR or "faster-whisper returned no transcript segments")
+                )
 
             output = asr(str(audio_path), return_timestamps=True, chunk_length_s=30)
             chunks = output.get("chunks", []) if isinstance(output, dict) else []
@@ -175,8 +184,11 @@ def transcribe(video_path: Path, config: AppConfig) -> tuple[list[TranscriptSegm
                             confidence=0.65,
                         )
                     )
-    except Exception:
-        warnings.append("ASR backend unavailable or failed; no transcript detections were generated.")
+    except Exception as exc:
+        warnings.append(
+            f"ASR backend unavailable or failed ({type(exc).__name__}: {exc}); "
+            "no transcript detections were generated."
+        )
 
     if not transcript_segments:
         warnings.append("ASR returned no segments. Install/configure faster-whisper or transformers ASR.")
