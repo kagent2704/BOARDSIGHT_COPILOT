@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 from boardsight_ai.database import execute
-from boardsight_ai.reporting import write_structured_reports
+from boardsight_ai.reporting import write_structured_report_artifact, write_structured_reports
 from boardsight_ai.service import MEETING_DB_PATH, _regenerate_meeting_report_from_record
 from boardsight_ai.storage import get_meeting_result, init_storage
 
@@ -84,3 +84,8 @@ def test_write_structured_reports_generates_enterprise_sections(tmp_path: Path, 
     assert Path(files["docx"]).exists()
     assert Path(files["pdf"]).exists()
     assert Path(files["image"]).exists()
+
+    markdown_download = write_structured_report_artifact(sample_pipeline_result, tmp_path, "structured_report.md")
+    json_download = write_structured_report_artifact(sample_pipeline_result, tmp_path, "boardsight_result.json")
+    assert markdown_download is not None and markdown_download.exists()
+    assert json_download is not None and json.loads(json_download.read_text(encoding="utf-8"))["input_video"] == "demo-meeting.mp4"

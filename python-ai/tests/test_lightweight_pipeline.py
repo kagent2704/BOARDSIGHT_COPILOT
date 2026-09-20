@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from boardsight_ai.config import AppConfig
-from boardsight_ai.lightweight_pipeline import _extract_visual_artifacts
-from boardsight_ai.models import TranscriptSegment
+from boardsight_ai.lightweight_pipeline import _extract_visual_artifacts, run_lightweight_pipeline
+from boardsight_ai.models import SpeakerDominanceResult, TranscriptResult, TranscriptSegment, WorkflowModel
 
 
 def _config(tmp_path: Path) -> AppConfig:
@@ -97,3 +97,43 @@ def test_extract_visual_artifacts_uses_sampled_video_evidence(tmp_path: Path, mo
     assert any(item.artifact_type == "dashboard" for item in artifacts)
     assert any("visible participant" in item.content_insight for item in artifacts)
     assert any("screen content visible" in item.content_insight for item in artifacts)
+
+
+def test_pipeline_passes_video_path_to_visual_extraction(tmp_path: Path, monkeypatch) -> None:
+    config = _config(tmp_path)
+    video_path = tmp_path / "meeting.mp4"
+    segment = TranscriptSegment(0.0, 5.0, "Kash", "We approved the roadmap.")
+    transcript = TranscriptResult(
+        full_text=segment.text,
+        segments=[segment],
+        speaker_directory=[{"speaker": "Kash"}],
+    )
+    captured: dict[str, Path] = {}
+
+    monkeypatch.setattr("boardsight_ai.lightweight_pipeline.transcribe", lambda *_args: ([segment], []))
+    monkeypatch.setattr("boardsight_ai.lightweight_pipeline.speaker_labeling.run", lambda *_args: transcript)
+    monkeypatch.setattr(
+        "boardsight_ai.lightweight_pipeline.speaker_dominance.run",
+        lambda *_args, **_kwargs: SpeakerDominanceResult(
+            speakers=[{"speaker": "Kash", "dominance_ratio": 100.0}],
+            active_speaker_timeline=[],
+            visual_identities=[],
+        ),
+    )
+
+    def fake_visual(path, _segments, _config):
+        captured["video_path"] = path
+        return []
+
+    monkeypatch.setattr("boardsight_ai.lightweight_pipeline._extract_visual_artifacts", fake_visual)
+    monkeypatch.setattr(
+        "boardsight_ai.lightweight_pipeline._merge_gemini_structure",
+        lambda *_args: ({"summary": "Approved.", "discussion_points": [], "decisions": [], "action_items": [], "blockers": [], "outcomes": []}, "test"),
+    )
+    monkeypatch.setattr("boardsight_ai.lightweight_pipeline.decision_trace.run", lambda *_args: [])
+    monkeypatch.setattr("boardsight_ai.lightweight_pipeline.probe_video", lambda *_args: {"duration_sec": 5.0})
+
+    result = run_lightweight_pipeline(video_path, tmp_path / "out", config)
+
+    assert captured["video_path"] == video_path
+    assert isinstance(result.workflow_model, WorkflowModel)

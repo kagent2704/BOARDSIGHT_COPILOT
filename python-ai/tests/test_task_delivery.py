@@ -3,10 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
+from boardsight_ai.auth import authenticate_user, create_user
 from boardsight_ai.config import AppConfig
 from boardsight_ai import task_delivery
 from boardsight_ai.service import app
+from boardsight_ai.storage import save_meeting_result
 
 
 def _config(tmp_path: Path) -> AppConfig:
@@ -185,3 +188,40 @@ def test_recorded_and_live_assignment_routes_are_registered() -> None:
     assert "/api/v1/live/{session_id}/assignments/{provider}/sync" in paths
     assert "/api/v1/workspaces/{organization_id}/integrations" in paths
     assert "/api/v1/workspaces/{organization_id}/integrations/{provider}" in paths
+
+
+@pytest.mark.parametrize("provider", ["gitlab", "notion", "trello", "microsoft-todo"])
+def test_recorded_assignment_preview_resolves_workspace_context(
+    provider: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    sample_pipeline_result,
+) -> None:
+    auth_db = tmp_path / "auth.db"
+    meeting_db = tmp_path / "meetings.db"
+    create_user(auth_db, "preview-owner", "secret", email="preview@example.com")
+    session = authenticate_user(auth_db, "preview-owner", "secret")
+    assert session is not None
+    monkeypatch.setattr("boardsight_ai.service.AUTH_DB_PATH", auth_db)
+    monkeypatch.setattr("boardsight_ai.service.MEETING_DB_PATH", meeting_db)
+    client = TestClient(app)
+    headers = {"Authorization": f"Bearer {session['token']}"}
+    workspace = client.get("/api/v1/me", headers=headers).json()["workspace"]
+    meeting_id = save_meeting_result(
+        meeting_db,
+        sample_pipeline_result,
+        user_id=int(session["user_id"]),
+        username="preview-owner",
+        organization_id=int(workspace["id"]),
+    )
+
+    response = client.post(
+        f"/api/v1/meetings/{meeting_id}/assignments/{provider}/preview",
+        headers=headers,
+        json={},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "previewed"
+    assert response.json()["provider"] == provider
+    assert response.json()["approval_id"]

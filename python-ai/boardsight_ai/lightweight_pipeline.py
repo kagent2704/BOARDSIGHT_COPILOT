@@ -528,7 +528,10 @@ def run_lightweight_pipeline(
         "structured_extraction",
         lambda: _extract_structured_moments(transcript_result.segments),
     )
-    visual_result = timed("visual_evidence", lambda: _extract_visual_artifacts(transcript_result.segments, config))
+    visual_result = timed(
+        "visual_evidence",
+        lambda: _extract_visual_artifacts(video_path, transcript_result.segments, config),
+    )
     workflow_result = timed(
         "workflow_model",
         lambda: _build_workflow_model(transcript_result.segments, decision_events, action_events, blocker_events),

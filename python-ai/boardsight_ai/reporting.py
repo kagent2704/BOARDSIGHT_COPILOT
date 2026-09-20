@@ -1367,6 +1367,10 @@ def write_structured_report_artifact(result: PipelineResult, output_dir: Path, f
                 writer.writerow([segment.start, segment.end, segment.speaker, segment.text, segment.confidence])
     elif safe_name == "summary_card.png":
         write_summary_image(result, artifact_path)
+    elif safe_name == "structured_report.md":
+        artifact_path.write_text(build_markdown_report(result), encoding="utf-8")
+    elif safe_name == "boardsight_result.json":
+        artifact_path.write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
     else:
         return None
     return artifact_path if artifact_path.exists() else None

@@ -1498,14 +1498,14 @@ async def meeting_gitlab_sync(meeting_id: int, request: Request, payload: dict |
 
 @app.post("/api/v1/meetings/{meeting_id}/assignments/{provider}/preview")
 async def meeting_assignment_preview(meeting_id: int, provider: str, request: Request, payload: dict | None = None) -> dict:
-    user = _require_session_user(request)
+    user = _user_with_workspace(request, _require_session_user(request), require_license=True)
     request_payload = await _collect_request_payload(request, payload)
     return _create_meeting_assignment_preview(meeting_id, provider, user, request_payload)
 
 
 @app.post("/api/v1/meetings/{meeting_id}/assignments/{provider}/sync")
 async def meeting_assignment_sync(meeting_id: int, provider: str, request: Request, payload: dict | None = None) -> dict:
-    user = _require_session_user(request)
+    user = _user_with_workspace(request, _require_session_user(request), require_license=True)
     request_payload = await _collect_request_payload(request, payload)
     return _sync_meeting_assignment_preview(meeting_id, provider, user, request_payload)
 
@@ -1543,6 +1543,8 @@ def _cleanup_temp_report_artifact(path: Path) -> None:
 
 def _regenerate_meeting_report_from_record(record: dict, file_name: str) -> Path | None:
     allowed_reports = {
+        "boardsight_result.json",
+        "structured_report.md",
         "structured_report.pdf",
         "structured_report.docx",
         "structured_report.xlsx",
@@ -1676,7 +1678,7 @@ def _create_assignment_preview_for_payload(
     request_payload: dict[str, Any],
 ) -> dict[str, Any]:
     normalized_provider = _normalize_provider_or_400(provider)
-    workspace = _workspace_context(user, require_license=True)
+    workspace = dict(user["_workspace"])
     config = default_config()
     connection_overrides = _resolved_assignment_connection(workspace, normalized_provider, request_payload)
     meeting_title = _meeting_title_from_payload(source_kind, source_id, source_payload)
@@ -1772,7 +1774,7 @@ def _sync_assignment_preview(
     preview_builder,
 ) -> dict[str, Any]:
     normalized_provider = _normalize_provider_or_400(provider)
-    workspace = _workspace_context(user, require_license=True)
+    workspace = dict(user["_workspace"])
     approval_id = str(request_payload.get("approval_id") or "").strip()
     execution_run = get_agent_execution_run(MEETING_DB_PATH, approval_id) if approval_id else None
     if execution_run is not None:
@@ -1871,7 +1873,7 @@ def _create_gitlab_preview_for_payload(
     user: dict[str, Any],
     request_payload: dict[str, Any],
 ) -> dict[str, Any]:
-    workspace = _workspace_context(user, require_license=True)
+    workspace = dict(user["_workspace"])
     config = default_config()
     meeting_title = _meeting_title_from_payload(source_kind, source_id, source_payload)
     plan = build_gitlab_execution_plan(
@@ -1966,7 +1968,7 @@ def _sync_gitlab_preview(
     request_payload: dict[str, Any],
     preview_builder,
 ) -> dict[str, Any]:
-    workspace = _workspace_context(user, require_license=True)
+    workspace = dict(user["_workspace"])
     approval_id = str(request_payload.get("approval_id") or "").strip()
     execution_run = get_agent_execution_run(MEETING_DB_PATH, approval_id) if approval_id else None
     if execution_run is None:
@@ -2233,14 +2235,14 @@ async def live_gitlab_sync(session_id: int, request: Request, payload: dict | No
 
 @app.post("/api/v1/live/{session_id}/assignments/{provider}/preview")
 async def live_assignment_preview(session_id: int, provider: str, request: Request, payload: dict | None = None) -> dict:
-    user = _require_session_user(request)
+    user = _user_with_workspace(request, _require_session_user(request), require_license=True)
     request_payload = await _collect_request_payload(request, payload)
     return _create_live_assignment_preview(session_id, provider, user, request_payload)
 
 
 @app.post("/api/v1/live/{session_id}/assignments/{provider}/sync")
 async def live_assignment_sync(session_id: int, provider: str, request: Request, payload: dict | None = None) -> dict:
-    user = _require_session_user(request)
+    user = _user_with_workspace(request, _require_session_user(request), require_license=True)
     request_payload = await _collect_request_payload(request, payload)
     return _sync_live_assignment_preview(session_id, provider, user, request_payload)
 
